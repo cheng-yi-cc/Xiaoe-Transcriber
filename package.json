@@ -19,7 +19,7 @@
     "test": "node --test",
     "check": "node scripts/check-syntax.cjs",
     "build:icon": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-icon.ps1",
-    "dist": "npm run check && npm test && electron-builder --win nsis --x64",
+    "dist": "npm run check && npm test && electron-builder --win nsis --x64 --publish never",
     "pack": "electron-builder --dir --win --x64"
   },
   "dependencies": {},
