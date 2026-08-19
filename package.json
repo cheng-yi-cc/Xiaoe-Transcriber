@@ -1,0 +1,68 @@
+{
+  "name": "xiaoe-tech-transcription",
+  "version": "0.1.0",
+  "description": "A local Windows app that turns authorized Xiaoe-tech replays into transcripts and summaries.",
+  "main": "src/main/main.cjs",
+  "author": "cheng-yi-cc",
+  "license": "MIT",
+  "homepage": "https://github.com/cheng-yi-cc/Xiaoe-tech-transcription#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cheng-yi-cc/Xiaoe-tech-transcription.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cheng-yi-cc/Xiaoe-tech-transcription/issues"
+  },
+  "private": false,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test",
+    "check": "node scripts/check-syntax.cjs",
+    "build:icon": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-icon.ps1",
+    "dist": "npm run check && npm test && electron-builder --win nsis --x64",
+    "pack": "electron-builder --dir --win --x64"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "43.4.1",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "io.github.cheng-yi-cc.xiaoe-tech-transcription",
+    "productName": "Xiaoe-tech transcription",
+    "asar": true,
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "Xiaoe-tech-transcription-Setup-${version}.${ext}",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Xiaoe-tech transcription",
+      "installerLanguages": ["zh_CN"],
+      "language": "2052",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

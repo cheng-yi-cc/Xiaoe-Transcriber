@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self' http://127.0.0.1:*;">
+  <title>Xiaoe-tech transcription</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand" aria-label="Xiaoe-tech transcription">
+        <img src="../../assets/icon.svg" alt="" class="brand-mark">
+        <div>
+          <div class="brand-name">Xiaoe-tech transcription</div>
+          <div class="brand-subtitle">本地课程转写台</div>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span class="privacy-chip"><i></i> 内容不上传</span>
+        <button class="auth-chip checking" id="authChip" type="button" aria-live="polite"><i></i><span>小鹅通：检测中</span></button>
+        <button class="ghost-button compact" id="settingsButton" type="button">模型与登录</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="primary-column">
+        <div class="intro">
+          <p class="eyebrow">SINGLE REPLAY · LOCAL GPU</p>
+          <h1>把几小时的课，变成两份<br>可以搜索的 Markdown。</h1>
+          <p class="intro-copy">粘贴你已购买课程的单视频回放页。应用会在静音登录窗口中获取当前授权流，然后在本机完成下载、转写和总结。</p>
+        </div>
+
+        <section class="task-card" aria-labelledby="taskTitle">
+          <div class="card-heading">
+            <div>
+              <span class="step-label">新任务</span>
+              <h2 id="taskTitle">从视频链接开始</h2>
+            </div>
+            <span class="task-kind">单个视频</span>
+          </div>
+
+          <label class="field-label" for="sourceUrl">小鹅通视频播放页</label>
+          <div class="url-field">
+            <span class="url-prefix" aria-hidden="true">↗</span>
+            <input id="sourceUrl" type="url" autocomplete="off" spellcheck="false" placeholder="https://…xetslk.com/sl/…">
+          </div>
+          <p class="field-hint" id="urlHint">支持已购买且能够正常回放的单视频页面；暂不处理直播和 DRM 加密视频。</p>
+
+          <div class="destination-row">
+            <div class="destination-copy">
+              <span class="field-label">文档保存位置</span>
+              <span class="path-text" id="outputPath">正在读取…</span>
+              <span class="field-hint">每次任务会创建“视频标题_日期时间”子文件夹。</span>
+            </div>
+            <button class="outline-button" id="chooseOutputButton" type="button">更改位置</button>
+          </div>
+
+          <div class="task-actions">
+            <button class="primary-button" id="startButton" type="button">
+              <span>开始转写</span>
+              <span class="button-arrow" aria-hidden="true">→</span>
+            </button>
+            <button class="danger-button hidden" id="cancelButton" type="button">取消任务</button>
+            <p class="action-note">处理时不会从扬声器播放视频声音。</p>
+          </div>
+        </section>
+
+        <section class="result-card hidden" id="resultCard" aria-live="polite">
+          <div class="result-seal" aria-hidden="true">✓</div>
+          <div>
+            <span class="step-label">已完成</span>
+            <h2 id="resultTitle">文档已经生成</h2>
+            <p id="resultPath" class="path-text"></p>
+          </div>
+          <button class="outline-button" id="openResultButton" type="button">打开文件夹</button>
+        </section>
+      </section>
+
+      <aside class="status-column" aria-label="任务状态">
+        <section class="signal-panel">
+          <div class="signal-topline">
+            <span>TRANSCRIPTION SIGNAL</span>
+            <span id="progressNumber">00%</span>
+          </div>
+          <div class="waveform" id="waveform" aria-hidden="true">
+            <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+            <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          </div>
+          <div class="progress-track"><span id="progressBar"></span></div>
+          <p class="signal-message" id="signalMessage">等待新任务</p>
+        </section>
+
+        <ol class="stage-list" id="stageList">
+          <li data-stage="capture"><span class="stage-dot"></span><div><b>取得授权流</b><small>应用内微信登录 · 全程静音</small></div></li>
+          <li data-stage="download"><span class="stage-dot"></span><div><b>下载并提取音频</b><small>并发获取 · 不保留视频</small></div></li>
+          <li data-stage="transcribe"><span class="stage-dot"></span><div><b>本地 GPU 转写</b><small>接近逐字稿 · 无时间戳</small></div></li>
+          <li data-stage="summarize"><span class="stage-dot"></span><div><b>本地分层总结</b><small>先分段，再合并去重</small></div></li>
+        </ol>
+
+        <section class="machine-card">
+          <div class="machine-heading">
+            <span class="machine-icon" aria-hidden="true">GPU</span>
+            <span id="gpuState" class="status-pill">检查中</span>
+          </div>
+          <strong id="gpuName">正在检测 NVIDIA 显卡</strong>
+          <small id="gpuDetail">第一版需要 Windows 10/11 和 NVIDIA GPU</small>
+        </section>
+
+        <p class="legal-note">仅处理当前账号有权回放的内容。遇到 DRM 或加密 HLS 时会停止，不尝试绕过保护。</p>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <span>MIT Open Source</span>
+      <span id="versionText">v0.1.0</span>
+    </footer>
+  </div>
+
+  <div class="modal-backdrop hidden" id="setupModal" role="dialog" aria-modal="true" aria-labelledby="setupTitle">
+    <section class="setup-dialog">
+      <button class="modal-close hidden" id="closeSetupButton" type="button" aria-label="关闭">×</button>
+      <div class="setup-mark"><img src="../../assets/icon.svg" alt=""></div>
+      <p class="eyebrow">FIRST-RUN SETUP</p>
+      <h2 id="setupTitle">准备本地模型</h2>
+      <p class="setup-copy">首次使用需要下载经过校验的转写、总结和音频引擎。安装后，课程内容的处理不调用任何云端 API。</p>
+
+      <div class="model-location">
+        <div>
+          <span class="field-label">模型与引擎目录</span>
+          <span class="path-text" id="modelPath">正在读取…</span>
+        </div>
+        <button class="outline-button" id="chooseModelButton" type="button">选择目录</button>
+      </div>
+
+      <div class="download-meter hidden" id="downloadMeter">
+        <div class="download-meta">
+          <span id="downloadLabel">准备下载…</span>
+          <span id="downloadPercent">0%</span>
+        </div>
+        <div class="progress-track large"><span id="downloadBar"></span></div>
+        <span class="download-detail" id="downloadDetail"></span>
+      </div>
+
+      <div class="setup-facts">
+        <span>约 3.1 GB 下载</span>
+        <span>最多约 5.2 GB 磁盘</span>
+        <span>SHA-256 校验</span>
+      </div>
+
+      <p class="error-message hidden" id="setupError"></p>
+      <button class="outline-button wide hidden" id="runtimeButton" type="button">下载 Microsoft Visual C++ 运行库</button>
+      <button class="primary-button wide" id="installButton" type="button">下载并安装本地模型 <span>→</span></button>
+      <div class="ready-actions hidden" id="readyActions">
+        <button class="outline-button" id="logoutButton" type="button">退出小鹅通登录</button>
+        <button class="primary-button" id="doneSetupButton" type="button">返回工作台</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
