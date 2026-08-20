@@ -11,7 +11,12 @@ contextBridge.exposeInMainWorld('xiaoeApp', {
   openPath: (targetPath) => ipcRenderer.invoke('shell:open-path', targetPath),
   ensureLogin: (sourceUrl) => ipcRenderer.invoke('auth:ensure-login', { sourceUrl }),
   logout: () => ipcRenderer.invoke('auth:logout'),
-  openVcRuntimeDownload: () => ipcRenderer.invoke('system:open-vc-runtime'),
+  installVcRuntime: () => ipcRenderer.invoke('system:install-vc-runtime'),
+  onVcRuntimeProgress: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('system:vc-runtime-progress', listener);
+    return () => ipcRenderer.removeListener('system:vc-runtime-progress', listener);
+  },
   onJobProgress: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('job:progress', listener);

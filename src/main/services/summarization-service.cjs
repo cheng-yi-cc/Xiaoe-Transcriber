@@ -81,7 +81,7 @@ async function summarizeTranscript({ llamaServerPath, modelPath, transcript, sig
       const content = await chat(baseUrl, [
         {
           role: 'system',
-          content: '你是严谨的中文课程笔记助手。只能摘取或压缩逐字稿明确说出的内容。每条要点必须能在原文中找到直接依据；禁止推测目的、好处、风险、影响或背景。材料很少时宁可只写一两条，不要凑数。'
+          content: '你是严谨的中文课程笔记助手，一律使用简体中文。只能摘取或压缩逐字稿明确说出的内容。每条要点必须能在原文中找到直接依据；禁止推测目的、好处、风险、影响或背景。材料很少时宁可只写一两条，不要凑数。'
         },
         {
           role: 'user',
@@ -98,7 +98,7 @@ async function summarizeTranscript({ llamaServerPath, modelPath, transcript, sig
       const reduced = [];
       for (const group of groups) {
         reduced.push(await chat(baseUrl, [
-          { role: 'system', content: '合并同类项并删除重复表述。每条都必须有输入材料直接支持；禁止补充常识、推测、效果或背景。' },
+          { role: 'system', content: '合并同类项并删除重复表述，一律使用简体中文。每条都必须有输入材料直接支持；禁止补充常识、推测、效果或背景。' },
           { role: 'user', content: group }
         ], signal, 700));
       }

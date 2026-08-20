@@ -129,13 +129,23 @@ function renderAppState(appState) {
     elements.gpuDetail.textContent = appState.gpu.detail;
   }
   setBusy(false);
-  if (!appState.vcRuntime.supported) {
+  elements.installButton.disabled = !appState.gpu.supported || !appState.vcRuntime.supported;
+  if (!appState.gpu.supported) {
+    elements.setupError.textContent = appState.gpu.detail;
+    elements.setupError.classList.remove('hidden');
+    elements.runtimeButton.classList.add('hidden');
+  } else if (!appState.vcRuntime.supported) {
+    elements.runtimeButton.textContent = '下载并安装 VC++ 运行库';
+    elements.runtimeButton.disabled = false;
     elements.setupError.textContent = appState.vcRuntime.detail;
     elements.setupError.classList.remove('hidden');
     elements.runtimeButton.classList.remove('hidden');
-  } else if (appState.dependencies.runtimeError) {
-    elements.setupError.textContent = appState.dependencies.runtimeError;
-    elements.setupError.classList.remove('hidden');
+  } else {
+    elements.runtimeButton.classList.add('hidden');
+    if (appState.dependencies.runtimeError) {
+      elements.setupError.textContent = appState.dependencies.runtimeError;
+      elements.setupError.classList.remove('hidden');
+    }
   }
   if (!state.dependenciesReady) openSetup(false);
 }
@@ -168,6 +178,25 @@ async function chooseModelDirectory() {
     state.app.settings = settings;
     elements.modelPath.textContent = settings.modelDirectory;
     elements.modelPath.title = settings.modelDirectory;
+  }
+}
+
+async function installVcRuntime() {
+  elements.runtimeButton.disabled = true;
+  elements.runtimeButton.textContent = '正在下载 VC++ 运行库…';
+  elements.setupError.classList.add('hidden');
+  try {
+    await window.xiaoeApp.installVcRuntime();
+    const appState = await window.xiaoeApp.getState();
+    renderAppState(appState);
+    if (appState.vcRuntime.supported) {
+      elements.downloadDetail.textContent = 'VC++ 运行库已安装完成。';
+    }
+  } catch (error) {
+    elements.setupError.textContent = error.message || String(error);
+    elements.setupError.classList.remove('hidden');
+    elements.runtimeButton.disabled = false;
+    elements.runtimeButton.textContent = '下载并安装 VC++ 运行库';
   }
 }
 
@@ -262,6 +291,10 @@ function handleJobProgress(event) {
 }
 
 async function initialize() {
+  window.xiaoeApp.onVcRuntimeProgress((event) => {
+    if (event.phase === 'download') elements.runtimeButton.textContent = '正在下载 VC++ 运行库…';
+    if (event.phase === 'elevate') elements.runtimeButton.textContent = '等待 UAC 授权并完成安装…';
+  });
   window.xiaoeApp.onDependencyProgress(handleDependencyProgress);
   window.xiaoeApp.onJobProgress(handleJobProgress);
   window.xiaoeApp.onAuthStatus(renderAuthStatus);
@@ -293,7 +326,7 @@ elements.logoutButton.addEventListener('click', async () => {
     renderAuthStatus({ status: 'logged-out', message: '小鹅通登录已退出。' });
   }
 });
-elements.runtimeButton.addEventListener('click', () => window.xiaoeApp.openVcRuntimeDownload());
+elements.runtimeButton.addEventListener('click', () => void installVcRuntime());
 elements.openResultButton.addEventListener('click', () => {
   if (state.resultDirectory) window.xiaoeApp.openPath(state.resultDirectory);
 });
