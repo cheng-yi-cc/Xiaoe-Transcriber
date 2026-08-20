@@ -1,17 +1,17 @@
 {
-  "name": "xiaoe-tech-transcription",
+  "name": "xiaoe-transcriber",
   "version": "0.1.0",
   "description": "A local Windows app that turns authorized Xiaoe-tech replays into transcripts and summaries.",
   "main": "src/main/main.cjs",
   "author": "cheng-yi-cc",
   "license": "MIT",
-  "homepage": "https://github.com/cheng-yi-cc/Xiaoe-tech-transcription#readme",
+  "homepage": "https://github.com/cheng-yi-cc/Xiaoe-Transcriber#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cheng-yi-cc/Xiaoe-tech-transcription.git"
+    "url": "git+https://github.com/cheng-yi-cc/Xiaoe-Transcriber.git"
   },
   "bugs": {
-    "url": "https://github.com/cheng-yi-cc/Xiaoe-tech-transcription/issues"
+    "url": "https://github.com/cheng-yi-cc/Xiaoe-Transcriber/issues"
   },
   "private": false,
   "scripts": {
@@ -19,6 +19,7 @@
     "test": "node --test",
     "check": "node scripts/check-syntax.cjs",
     "build:icon": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-icon.ps1",
+    "build:installer-art": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer-art.ps1",
     "dist": "npm run check && npm test && electron-builder --win nsis --x64 --publish never",
     "pack": "electron-builder --dir --win --x64"
   },
@@ -28,8 +29,8 @@
     "electron-builder": "26.15.3"
   },
   "build": {
-    "appId": "io.github.cheng-yi-cc.xiaoe-tech-transcription",
-    "productName": "Xiaoe-tech transcription",
+    "appId": "io.github.cheng-yi-cc.xiaoe-transcriber",
+    "productName": "Xiaoe Transcriber",
     "asar": true,
     "directories": {
       "output": "dist",
@@ -50,19 +51,23 @@
         }
       ],
       "icon": "build/icon.ico",
-      "artifactName": "Xiaoe-tech-transcription-Setup-${version}.${ext}",
+      "artifactName": "Xiaoe-Transcriber-Setup-${version}.${ext}",
       "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
+      "guid": "805bbb7b-dc99-5c4b-8354-e25c2432ec73",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
-      "shortcutName": "Xiaoe-tech transcription",
+      "shortcutName": "Xiaoe Transcriber",
       "installerLanguages": ["zh_CN"],
       "language": "2052",
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "installerHeader": "build/installerHeader.bmp",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/uninstallerSidebar.bmp"
     }
   }
 }

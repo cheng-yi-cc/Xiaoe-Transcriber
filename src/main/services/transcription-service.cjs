@@ -3,6 +3,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { runProcess } = require('./process-runner.cjs');
 const { paragraphizeTranscript } = require('./transcript-utils.cjs');
+const { toSimplifiedChinese } = require('./chinese-conversion.cjs');
 
 async function extractAudio({ ffmpegPath, mediaPath, audioPath, signal, onProgress = () => {} }) {
   let lastTimeSeconds = 0;
@@ -34,6 +35,7 @@ async function transcribeAudio({ whisperPath, modelPath, audioPath, workDirector
     '-m', modelPath,
     '-f', audioPath,
     '-l', 'auto',
+    '--prompt', '以下是普通话的句子。',
     '-t', String(threadCount),
     '-fa',
     '-pp',
@@ -51,7 +53,7 @@ async function transcribeAudio({ whisperPath, modelPath, audioPath, workDirector
     }
   });
   const raw = await fsp.readFile(`${outputBase}.txt`, 'utf8');
-  const transcript = paragraphizeTranscript(raw);
+  const transcript = toSimplifiedChinese(paragraphizeTranscript(raw));
   if (!transcript.trim()) throw new Error('转写引擎没有生成有效文字。');
   onProgress({ percent: 100 });
   return transcript;

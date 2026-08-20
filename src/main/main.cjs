@@ -12,6 +12,7 @@ const { clearAuthSession, ensureXiaoeLogin } = require('./services/auth-capture.
 const { DependencyManager } = require('./services/dependency-manager.cjs');
 const { SettingsStore } = require('./services/settings-store.cjs');
 const { probeNvidiaGpu, probeVcRuntime } = require('./services/system-probe.cjs');
+const { installVcRuntime } = require('./services/vc-runtime-installer.cjs');
 const { JobController } = require('./job-controller.cjs');
 
 let mainWindow = null;
@@ -24,9 +25,9 @@ let lastAuthVerification = null;
 
 function defaultModelDirectory() {
   if (process.platform === 'win32' && fs.existsSync('D:\\')) {
-    return 'D:\\Xiaoe-tech-transcription\\Models';
+    return 'D:\\Xiaoe-Transcriber\\Models';
   }
-  return path.join(app.getPath('localAppData'), 'Xiaoe-tech transcription', 'Models');
+  return path.join(app.getPath('localAppData'), 'Xiaoe Transcriber', 'Models');
 }
 
 function dependencyManifest() {
@@ -89,7 +90,7 @@ function createMainWindow() {
     height: 800,
     minWidth: 960,
     minHeight: 680,
-    title: 'Xiaoe-tech transcription',
+    title: 'Xiaoe Transcriber',
     backgroundColor: '#eef2ef',
     autoHideMenuBar: true,
     show: false,
@@ -113,7 +114,7 @@ function createMainWindow() {
   mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.on('closed', () => { mainWindow = null; });
 
-  const screenshotPath = process.env.XIAOE_TRANSCRIPTION_SCREENSHOT_PATH;
+  const screenshotPath = process.env.XIAOE_TRANSCRIBER_SCREENSHOT_PATH;
   if (screenshotPath) {
     mainWindow.webContents.once('did-finish-load', () => {
       void (async () => {
@@ -148,7 +149,7 @@ function registerIpc() {
       }
     }
     const appSettings = settings.getAll();
-    if (process.env.XIAOE_TRANSCRIPTION_SCREENSHOT_PATH) {
+    if (process.env.XIAOE_TRANSCRIBER_SCREENSHOT_PATH) {
       appSettings.outputDirectory = 'D:\\课程文字稿';
       appSettings.lastSourceUrl = '';
     }
@@ -157,7 +158,7 @@ function registerIpc() {
       settings: appSettings,
       auth: {
         ...authStatus,
-        autoCheck: !process.env.XIAOE_TRANSCRIPTION_SCREENSHOT_PATH
+        autoCheck: !process.env.XIAOE_TRANSCRIBER_SCREENSHOT_PATH
       },
       dependencies,
       gpu,
@@ -189,6 +190,9 @@ function registerIpc() {
   ipcMain.handle('dependencies:status', () => createDependencyManager().getStatus());
   ipcMain.handle('dependencies:install', async () => {
     if (dependencyInstall) return dependencyInstall;
+    const [gpu, vcRuntime] = await Promise.all([probeNvidiaGpu(), probeVcRuntime()]);
+    if (!gpu.supported) throw new Error('未检测到可用的 NVIDIA 显卡或驱动，请先安装 NVIDIA 驱动。');
+    if (!vcRuntime.supported) throw new Error('请先安装 Microsoft Visual C++ 2015–2022 x64 运行库。');
     const manager = createDependencyManager();
     dependencyInstall = manager.installAll();
     try {
@@ -227,7 +231,14 @@ function registerIpc() {
       return { ...result, error: error.message };
     }
   });
-  ipcMain.handle('system:open-vc-runtime', () => shell.openExternal('https://aka.ms/vs/17/release/vc_redist.x64.exe'));
+  ipcMain.handle('system:install-vc-runtime', async () => {
+    return installVcRuntime({
+      fetchImpl: (url, options) => net.fetch(url, options),
+      onProgress: (event) => {
+        if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('system:vc-runtime-progress', event);
+      }
+    });
+  });
 }
 
 const singleInstanceLock = app.requestSingleInstanceLock();
@@ -243,7 +254,7 @@ if (!singleInstanceLock) {
 
   app.whenReady().then(() => {
     settings = new SettingsStore(path.join(app.getPath('userData'), 'settings.json'), {
-      outputDirectory: path.join(app.getPath('documents'), 'Xiaoe-tech transcription'),
+      outputDirectory: path.join(app.getPath('documents'), 'Xiaoe Transcriber'),
       modelDirectory: defaultModelDirectory(),
       lastSourceUrl: ''
     });

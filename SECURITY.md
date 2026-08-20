@@ -21,7 +21,7 @@
 - 本工具不会绕过付费权限、DRM 或加密 HLS。
 - 登录状态由 Chromium 保存，不由应用导出或上传。
 - 媒体签名地址不得写入日志、Issue 或测试夹具。
-- 所有首次下载的二进制和模型必须使用清单中的固定 SHA-256 校验。
+- 所有首次下载的二进制和模型必须使用清单中的固定 SHA-256 校验；唯一例外是 VC++ 运行库，从微软官方 `https://aka.ms/vs/17/release/vc_redist.x64.exe` 实时下载，依赖微软签名而非固定校验值。
 - 渲染进程保持 `nodeIntegration: false` 和 `contextIsolation: true`。
 
 若发现上述边界被破坏，请按安全漏洞处理。

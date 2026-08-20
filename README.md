@@ -1,10 +1,10 @@
-# Xiaoe-tech transcription
+# Xiaoe Transcriber
 
 一个面向 Windows 的本地开源工具：把本人已合法购买、当前账号有权回放的小鹅通单视频页面，转换成一份接近逐字稿的 Markdown 和一份内容总结 Markdown。
 
 课程音频、文字稿和总结都在本机处理，不调用云端转写或大模型 API。应用不会绕过购买权限、DRM 或加密 HLS。
 
-![Xiaoe-tech transcription 主界面](docs/app-preview.png)
+![Xiaoe Transcriber 主界面](docs/app-preview.png)
 
 ## 功能
 
@@ -13,7 +13,7 @@
 - 监听当前已授权页面产生的临时 HLS 回放地址
 - 登录窗口和媒体处理全程静音，不需要按视频原速播放
 - 自动选择最低带宽但音轨完整的 HLS 清晰度，分片并发下载
-- 使用 `whisper.cpp` + NVIDIA CUDA 生成接近逐字稿的中文文本
+- 使用 `whisper.cpp` + NVIDIA CUDA 生成接近逐字稿的简体中文文本（繁体输出会自动转换）
 - 使用 `llama.cpp` + Qwen2.5 在本机做分段总结，并校验生成内容是否得到逐字稿支持
 - 小模型未按结构输出或出现无原文依据的用词时，自动切换为原文高频主题与代表性片段摘要
 - 用户选择文档保存位置；每次任务创建带日期时间的新文件夹
@@ -33,21 +33,22 @@
 - Windows 10 或 Windows 11，x64
 - NVIDIA 显卡；第一版不支持 AMD GPU 或纯 CPU 模式
 - 建议 6 GB 以上显存，已在 RTX 4060 Laptop 8 GB 上验证
-- 较新的 NVIDIA 驱动
-- [Microsoft Visual C++ 2015–2022 Redistributable（x64）](https://aka.ms/vs/17/release/vc_redist.x64.exe)
+- 较新的 NVIDIA 驱动（需自行安装；Windows 更新通常会自带）
+- Microsoft Visual C++ 2015–2022 Redistributable（x64）：首次启动时应用会自动检测，缺失时自动下载并请求 UAC 授权安装
 - 首次模型下载约 3.1 GB，安装后最多约占 5.2 GB
 - 视频下载阶段需要足够的临时磁盘空间
 
 ## 安装与使用
 
-1. 从 GitHub Releases 下载 `Xiaoe-tech-transcription-Setup-0.1.0.exe`。
+1. 从 GitHub Releases 下载 `Xiaoe-Transcriber-Setup-0.1.0.exe`。
 2. 通过安装向导完成安装；安装器会创建桌面快捷方式。
-3. 首次启动时确认模型目录。检测到 D 盘时默认使用 `D:\Xiaoe-tech-transcription\Models`。
-4. 下载并安装本地模型。每个文件都会进行 SHA-256 校验，解压后还会启动三个引擎做自检。
-5. 选择总结和文字稿的保存位置。
-6. 粘贴小鹅通单视频回放页链接。首次使用时，应用会据此确定对应店铺并自动检测登录。
-7. 若登录已失效，应用会直接弹出静音的微信扫码窗口；登录成功后窗口自动关闭。
-8. 开始转写。应用会在任务开始前复检会话，已登录时不会显示视频播放窗口。
+3. 首次启动时，应用先检测 NVIDIA 显卡和 VC++ 运行库；运行库缺失时点击“下载并安装 VC++ 运行库”，在 UAC 弹窗中授权即可。
+4. 确认模型目录。检测到 D 盘时默认使用 `D:\Xiaoe-Transcriber\Models`。
+5. 下载并安装本地模型。每个文件都会进行 SHA-256 校验，解压后还会启动三个引擎做自检。
+6. 选择总结和文字稿的保存位置。
+7. 粘贴小鹅通单视频回放页链接。首次使用时，应用会据此确定对应店铺并自动检测登录。
+8. 若登录已失效，应用会直接弹出静音的微信扫码窗口；登录成功后窗口自动关闭。
+9. 开始转写。应用会在任务开始前复检会话，已登录时不会显示视频播放窗口。
 
 首次安装前没有店铺/课程上下文，无法预先生成正确的登录二维码，因此第一次检测发生在粘贴有效链接后。从第二次启动开始，应用会使用上次链接自动检测并在需要时弹出扫码窗口。
 
@@ -70,19 +71,22 @@
 - HLS 签名地址只在任务内存中使用，不写入结果文件和日志。
 - 下载器只接受小鹅通相关 HTTPS 域名的入口链接。
 - 第三方二进制和模型来自固定官方地址并强制校验 SHA-256。
+- 繁简转换词表内嵌自 OpenCC（Apache-2.0），仅用于把转写结果规范为简体中文。
 - 取消或完成任务后会清理临时媒体和音频；不会保留完整视频。
 
 本工具只应用于你本人拥有合法访问权、且使用行为符合平台协议与当地法律的内容。请勿传播课程文字稿或利用本工具侵犯版权。
 
 ## 本地开发
 
-需要 Node.js 24+、npm 和 ImageMagick（仅在重新生成 Windows 图标时需要）。
+需要 Node.js 24+、npm 和 ImageMagick（仅在重新生成 Windows 图标或安装向导位图时需要）。
 
 ```powershell
 npm install
 npm test
 npm run check
 npm start
+npm run build:icon
+npm run build:installer-art
 ```
 
 构建 NSIS 安装包：
