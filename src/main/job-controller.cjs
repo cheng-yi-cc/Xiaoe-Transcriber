@@ -9,11 +9,12 @@ const { summarizeTranscript } = require('./services/summarization-service.cjs');
 const { extractAudio, transcribeAudio } = require('./services/transcription-service.cjs');
 
 class JobController {
-  constructor({ mainWindow, settings, createDependencyManager, onAuthStatus = () => {} }) {
+  constructor({ mainWindow, settings, createDependencyManager, onAuthStatus = () => {}, onHistory = () => {} }) {
     this.mainWindow = mainWindow;
     this.settings = settings;
     this.createDependencyManager = createDependencyManager;
     this.onAuthStatus = onAuthStatus;
+    this.onHistory = onHistory;
     this.current = null;
   }
 
@@ -33,6 +34,7 @@ class JobController {
     let temporaryDirectory = null;
     let resultDirectory = null;
     let transcriptPath = null;
+    let historyRecorded = false;
 
     try {
       const settings = this.settings.getAll();
@@ -88,9 +90,11 @@ class JobController {
       });
       await fsp.rm(mediaPath, { force: true });
 
+      const modelOption = dependencies.manifest.modelOption;
+      if (!modelOption) throw new Error('尚未选择转写模型。');
       const whisperPath = await dependencies.resolveRequiredFile('whisper-engine', 'whisper-cli.exe');
-      const whisperModelPath = await dependencies.resolveRequiredFile('whisper-model', 'ggml-small.bin');
-      this.send({ stage: 'transcribe', percent: 43, message: 'NVIDIA GPU 正在转写…' });
+      const whisperModelPath = await dependencies.resolveRequiredFile(modelOption.componentId, modelOption.fileName);
+      this.send({ stage: 'transcribe', percent: 43, message: `${modelOption.label} 正在使用 NVIDIA GPU 转写…` });
       const transcript = await transcribeAudio({
         whisperPath,
         modelPath: whisperModelPath,
@@ -128,6 +132,8 @@ class JobController {
       const summaryPath = await writeSummaryFile({ resultDirectory, title, sourceUrl, summary });
 
       const result = { resultDirectory, transcriptPath, summaryPath, title };
+      this.onHistory({ title, sourceUrl, resultDirectory, modelId: modelOption.id });
+      historyRecorded = true;
       this.send({ stage: 'complete', percent: 100, message: '总结和完整文字稿已生成。', ...result });
       return result;
     } catch (error) {
@@ -142,6 +148,14 @@ class JobController {
       if (resultDirectory && !transcriptPath) {
         await fsp.rmdir(resultDirectory).catch(() => {});
         resultDirectory = null;
+      }
+      if (resultDirectory && transcriptPath && !historyRecorded) {
+        this.onHistory({
+          title: path.basename(resultDirectory),
+          sourceUrl,
+          resultDirectory,
+          modelId: this.settings.get('selectedModelId')
+        });
       }
       this.send({ stage: 'error', percent: 0, message: error.message, resultDirectory, transcriptPath });
       throw error;
