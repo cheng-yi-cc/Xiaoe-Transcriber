@@ -6,6 +6,28 @@ const { Readable, Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { runProcess } = require('./process-runner.cjs');
 
+function getModelOption(manifest, modelId) {
+  const options = Array.isArray(manifest.modelOptions) ? manifest.modelOptions : [];
+  return options.find((option) => option.id === modelId) || options[0] || null;
+}
+
+function selectManifestForModel(manifest, modelId) {
+  const modelOption = getModelOption(manifest, modelId);
+  const components = manifest.components.filter((component) => (
+    !component.modelOptionId || component.modelOptionId === modelOption?.id
+  ));
+  return {
+    ...manifest,
+    modelOption,
+    estimatedInstalledBytes: modelOption?.estimatedInstalledBytes || manifest.estimatedInstalledBytes,
+    components
+  };
+}
+
+function chooseModelAfterInstall(activeModelId, activeModelReady, installedModelId) {
+  return activeModelReady ? activeModelId : installedModelId;
+}
+
 function ensureWithin(root, candidate) {
   const resolvedRoot = path.resolve(root);
   const resolvedCandidate = path.resolve(candidate);
@@ -81,6 +103,7 @@ class DependencyManager {
     }
     return {
       ready: components.every((component) => component.ready),
+      modelId: this.manifest.modelOption?.id || null,
       rootDirectory: this.rootDirectory,
       estimatedInstalledBytes: this.manifest.estimatedInstalledBytes,
       totalDownloadBytes: this.totalDownloadBytes,
@@ -117,6 +140,21 @@ class DependencyManager {
     await this.verifyInstalledEngines(signal);
     this.emit({ phase: 'complete', completedBytes: this.totalDownloadBytes, currentBytes: 0 });
     return finalStatus;
+  }
+
+  async removeModel() {
+    const modelOption = this.manifest.modelOption;
+    const component = this.manifest.components.find((item) => (
+      item.id === modelOption?.componentId && item.modelOptionId === modelOption?.id
+    ));
+    if (!component) throw new Error('找不到要删除的转写模型。');
+
+    const status = await this.getStatus();
+    const installed = status.components.find((item) => item.id === component.id)?.ready;
+    if (!installed) throw new Error(`${modelOption.label} 尚未安装。`);
+
+    await fsp.rm(this.componentDirectory(component.id), { recursive: true, force: true });
+    return this.getStatus();
   }
 
   async verifyInstalledEngines(signal) {
@@ -221,4 +259,12 @@ class DependencyManager {
   }
 }
 
-module.exports = { DependencyManager, ensureWithin, extractArchive, findFileRecursive };
+module.exports = {
+  chooseModelAfterInstall,
+  DependencyManager,
+  ensureWithin,
+  extractArchive,
+  findFileRecursive,
+  getModelOption,
+  selectManifestForModel
+};

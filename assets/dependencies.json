@@ -1,6 +1,41 @@
 {
-  "schemaVersion": 1,
-  "estimatedInstalledBytes": 5200000000,
+  "schemaVersion": 2,
+  "estimatedInstalledBytes": 6500000000,
+  "modelOptions": [
+    {
+      "id": "small",
+      "label": "Whisper Small",
+      "componentId": "whisper-model",
+      "fileName": "ggml-small.bin",
+      "downloadBytes": 487601967,
+      "estimatedInstalledBytes": 5200000000,
+      "minimumVramMb": 2048,
+      "description": "轻量 · 多语言",
+      "suitability": "适合低配置电脑"
+    },
+    {
+      "id": "medium",
+      "label": "Whisper Medium",
+      "componentId": "whisper-model-medium",
+      "fileName": "ggml-medium.bin",
+      "downloadBytes": 1533763059,
+      "estimatedInstalledBytes": 6400000000,
+      "minimumVramMb": 4096,
+      "description": "平衡 · 多语言",
+      "suitability": "兼顾速度与精度"
+    },
+    {
+      "id": "large-v3-turbo",
+      "label": "Whisper Large v3 Turbo",
+      "componentId": "whisper-model-large-v3-turbo",
+      "fileName": "ggml-large-v3-turbo.bin",
+      "downloadBytes": 1624555275,
+      "estimatedInstalledBytes": 6500000000,
+      "minimumVramMb": 6144,
+      "description": "高精度 · 多语言",
+      "suitability": "适合高性能显卡"
+    }
+  ],
   "components": [
     {
       "id": "ffmpeg",
@@ -58,9 +93,10 @@
       "id": "whisper-model",
       "label": "Whisper Small 多语言模型",
       "version": "small",
+      "modelOptionId": "small",
       "downloads": [
         {
-          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin?download=true",
+          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/c521a4b02f422512d734391fdf08bb08c0862f68/ggml-small.bin?download=true",
           "fileName": "ggml-small.bin",
           "sha256": "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
           "size": 487601967,
@@ -70,12 +106,44 @@
       "requiredFiles": ["ggml-small.bin"]
     },
     {
+      "id": "whisper-model-medium",
+      "label": "Whisper Medium 多语言模型",
+      "version": "medium-c521a4b",
+      "modelOptionId": "medium",
+      "downloads": [
+        {
+          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/c521a4b02f422512d734391fdf08bb08c0862f68/ggml-medium.bin?download=true",
+          "fileName": "ggml-medium.bin",
+          "sha256": "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208",
+          "size": 1533763059,
+          "archive": false
+        }
+      ],
+      "requiredFiles": ["ggml-medium.bin"]
+    },
+    {
+      "id": "whisper-model-large-v3-turbo",
+      "label": "Whisper Large v3 Turbo 多语言模型",
+      "version": "large-v3-turbo-6034871",
+      "modelOptionId": "large-v3-turbo",
+      "downloads": [
+        {
+          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/6034871ec87c84e342efab769d4c5c06cd126db3/ggml-large-v3-turbo.bin?download=true",
+          "fileName": "ggml-large-v3-turbo.bin",
+          "sha256": "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+          "size": 1624555275,
+          "archive": false
+        }
+      ],
+      "requiredFiles": ["ggml-large-v3-turbo.bin"]
+    },
+    {
       "id": "summary-model",
       "label": "Qwen2.5 1.5B 本地总结模型",
       "version": "q4_k_m",
       "downloads": [
         {
-          "url": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf?download=true",
+          "url": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/dd26da440ef0330c47919d1ecae0966d24022222/qwen2.5-1.5b-instruct-q4_k_m.gguf?download=true",
           "fileName": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
           "sha256": "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
           "size": 1117320736,

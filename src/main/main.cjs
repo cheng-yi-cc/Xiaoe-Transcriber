@@ -9,17 +9,28 @@ const {
   shell
 } = require('electron');
 const { clearAuthSession, ensureXiaoeLogin } = require('./services/auth-capture.cjs');
-const { DependencyManager } = require('./services/dependency-manager.cjs');
+const {
+  chooseModelAfterInstall,
+  DependencyManager,
+  getModelOption,
+  selectManifestForModel
+} = require('./services/dependency-manager.cjs');
+const { HistoryStore } = require('./services/history-store.cjs');
 const { SettingsStore } = require('./services/settings-store.cjs');
-const { probeNvidiaGpu, probeVcRuntime } = require('./services/system-probe.cjs');
+const { StartupAuthGate } = require('./services/startup-auth-gate.cjs');
+const { getSystemProfile, probeNvidiaGpu, probeVcRuntime } = require('./services/system-probe.cjs');
 const { installVcRuntime } = require('./services/vc-runtime-installer.cjs');
 const { JobController } = require('./job-controller.cjs');
 
 let mainWindow = null;
 let settings = null;
+let history = null;
 let jobController = null;
-let dependencyInstall = null;
+let startupAuthGate = null;
+let dependencyOperation = null;
 let authOperation = null;
+let startupAuthOperation = null;
+let manifestCache = null;
 let authStatus = { status: 'unknown', message: '尚未检测小鹅通登录状态。' };
 let lastAuthVerification = null;
 
@@ -31,19 +42,78 @@ function defaultModelDirectory() {
 }
 
 function dependencyManifest() {
-  const manifestPath = path.join(app.getAppPath(), 'assets', 'dependencies.json');
-  return JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  if (!manifestCache) {
+    const manifestPath = path.join(app.getAppPath(), 'assets', 'dependencies.json');
+    manifestCache = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  }
+  return manifestCache;
 }
 
-function createDependencyManager() {
+function createDependencyManager(modelId = settings.get('selectedModelId')) {
+  const manifest = selectManifestForModel(dependencyManifest(), modelId);
   return new DependencyManager({
     rootDirectory: settings.get('modelDirectory'),
-    manifest: dependencyManifest(),
+    manifest,
     fetchImpl: (url, options) => net.fetch(url, options),
     onProgress: (event) => {
       if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('dependencies:progress', event);
     }
   });
+}
+
+function componentDownloadBytes(component) {
+  return component.downloads.reduce((sum, download) => sum + download.size, 0);
+}
+
+async function describeModel(option) {
+  const manager = createDependencyManager(option.id);
+  const status = await manager.getStatus();
+  const readyById = new Map(status.components.map((component) => [component.id, component.ready]));
+  const remainingDownloadBytes = manager.manifest.components
+    .filter((component) => !readyById.get(component.id))
+    .reduce((sum, component) => sum + componentDownloadBytes(component), 0);
+  return {
+    ...option,
+    ready: status.ready,
+    modelInstalled: Boolean(status.components.find((component) => component.id === option.componentId)?.ready),
+    totalDownloadBytes: status.totalDownloadBytes,
+    remainingDownloadBytes
+  };
+}
+
+async function resolveSelectedModelId(systemProfile) {
+  const manifest = dependencyManifest();
+  const configured = settings.get('selectedModelId');
+  const configuredOption = manifest.modelOptions.find((option) => option.id === configured);
+  if (configuredOption && (await describeModel(configuredOption)).ready) return configured;
+
+  const models = await Promise.all(manifest.modelOptions.map(describeModel));
+  const installedModel = models.find((model) => (
+    model.id === systemProfile.recommendedModelId && model.ready
+  )) || models.find((model) => model.ready);
+  const selectedModelId = installedModel?.id || configuredOption?.id || systemProfile.recommendedModelId;
+  settings.set({ selectedModelId });
+  return selectedModelId;
+}
+
+async function getDependencyState(selectedModelId = settings.get('selectedModelId')) {
+  const manifest = dependencyManifest();
+  const fallbackId = manifest.modelOptions[0]?.id;
+  const normalizedId = getModelOption(manifest, selectedModelId)?.id || fallbackId;
+  const manager = createDependencyManager(normalizedId);
+  const status = await manager.getStatus();
+  const readyById = new Map(status.components.map((component) => [component.id, component.ready]));
+  const remainingDownloadBytes = manager.manifest.components
+    .filter((component) => !readyById.get(component.id))
+    .reduce((sum, component) => sum + componentDownloadBytes(component), 0);
+  const models = await Promise.all(manifest.modelOptions.map(describeModel));
+  return {
+    ...status,
+    selectedModelId: normalizedId,
+    selectedModel: getModelOption(manifest, normalizedId),
+    remainingDownloadBytes,
+    models
+  };
 }
 
 function publishAuthStatus(event) {
@@ -58,7 +128,7 @@ function publishAuthStatus(event) {
 async function ensureLoginForSource(sourceUrl) {
   const normalizedUrl = String(sourceUrl || settings.get('lastSourceUrl') || '').trim();
   if (!normalizedUrl) {
-    return publishAuthStatus({ status: 'needs-link', message: '粘贴视频链接后自动检测登录。' });
+    return publishAuthStatus({ status: 'needs-link', message: '请先输入一个有权访问的小鹅通视频链接。' });
   }
 
   settings.set({ lastSourceUrl: normalizedUrl });
@@ -84,14 +154,31 @@ async function ensureLoginForSource(sourceUrl) {
   return authOperation;
 }
 
+async function ensureStartupLogin(sourceUrl) {
+  const normalizedUrl = String(sourceUrl || settings.get('lastSourceUrl') || '').trim();
+  if (!normalizedUrl) {
+    return publishAuthStatus({ status: 'needs-link', message: '输入一个有权访问的视频链接以显示登录二维码。' });
+  }
+  settings.set({ lastSourceUrl: normalizedUrl });
+  if (startupAuthOperation) return startupAuthOperation;
+
+  startupAuthOperation = startupAuthGate.login(normalizedUrl).then((result) => {
+    lastAuthVerification = { sourceUrl: normalizedUrl, checkedAt: Date.now() };
+    return result;
+  }).finally(() => {
+    startupAuthOperation = null;
+  });
+  return startupAuthOperation;
+}
+
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 800,
-    minWidth: 960,
+    minWidth: 880,
     minHeight: 680,
     title: 'Xiaoe Transcriber',
-    backgroundColor: '#eef2ef',
+    backgroundColor: '#fffdf7',
     autoHideMenuBar: true,
     show: false,
     icon: path.join(app.getAppPath(), 'assets', 'icon.svg'),
@@ -112,21 +199,25 @@ function createMainWindow() {
   });
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   mainWindow.once('ready-to-show', () => mainWindow.show());
-  mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('closed', () => {
+    startupAuthGate?.close();
+    startupAuthGate = null;
+    mainWindow = null;
+  });
 
   const screenshotPath = process.env.XIAOE_TRANSCRIBER_SCREENSHOT_PATH;
   if (screenshotPath) {
     mainWindow.webContents.once('did-finish-load', () => {
       void (async () => {
-        for (let attempt = 0; attempt < 40; attempt += 1) {
+        for (let attempt = 0; attempt < 60; attempt += 1) {
           const initialized = await mainWindow.webContents.executeJavaScript(
-            "document.querySelector('#outputPath')?.textContent !== '正在读取…'",
+            "document.body.dataset.ready === 'true'",
             true
           );
           if (initialized) break;
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
-        await new Promise((resolve) => setTimeout(resolve, 350));
+        await new Promise((resolve) => setTimeout(resolve, 500));
         const image = await mainWindow.webContents.capturePage();
         fs.writeFileSync(screenshotPath, image.toPNG());
         app.quit();
@@ -135,36 +226,43 @@ function createMainWindow() {
   }
 }
 
+async function getAppState() {
+  const [gpu, vcRuntime] = await Promise.all([probeNvidiaGpu(), probeVcRuntime()]);
+  const system = getSystemProfile(gpu);
+  const selectedModelId = await resolveSelectedModelId(system);
+  const dependencies = await getDependencyState(selectedModelId);
+  if (dependencies.ready) {
+    try {
+      await createDependencyManager(selectedModelId).verifyInstalledEngines();
+    } catch (error) {
+      dependencies.ready = false;
+      dependencies.runtimeError = error.message;
+    }
+  }
+  const appSettings = settings.getAll();
+  if (process.env.XIAOE_TRANSCRIBER_SCREENSHOT_PATH) {
+    appSettings.outputDirectory = 'D:\\课程文字稿';
+    appSettings.lastSourceUrl = '';
+  }
+  return {
+    version: app.getVersion(),
+    screenshotPage: process.env.XIAOE_TRANSCRIBER_SCREENSHOT_PAGE || '',
+    settings: appSettings,
+    auth: {
+      ...authStatus,
+      autoCheck: !process.env.XIAOE_TRANSCRIBER_SCREENSHOT_PATH,
+      hasSavedSource: Boolean(appSettings.lastSourceUrl)
+    },
+    dependencies,
+    gpu,
+    vcRuntime,
+    system,
+    history: history.list()
+  };
+}
+
 function registerIpc() {
-  ipcMain.handle('app:get-state', async () => {
-    const manager = createDependencyManager();
-    const dependencies = await manager.getStatus();
-    const [gpu, vcRuntime] = await Promise.all([probeNvidiaGpu(), probeVcRuntime()]);
-    if (dependencies.ready) {
-      try {
-        await manager.verifyInstalledEngines();
-      } catch (error) {
-        dependencies.ready = false;
-        dependencies.runtimeError = error.message;
-      }
-    }
-    const appSettings = settings.getAll();
-    if (process.env.XIAOE_TRANSCRIBER_SCREENSHOT_PATH) {
-      appSettings.outputDirectory = 'D:\\课程文字稿';
-      appSettings.lastSourceUrl = '';
-    }
-    return {
-      version: app.getVersion(),
-      settings: appSettings,
-      auth: {
-        ...authStatus,
-        autoCheck: !process.env.XIAOE_TRANSCRIBER_SCREENSHOT_PATH
-      },
-      dependencies,
-      gpu,
-      vcRuntime
-    };
-  });
+  ipcMain.handle('app:get-state', getAppState);
 
   ipcMain.handle('settings:choose-output-directory', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -177,7 +275,7 @@ function registerIpc() {
   });
 
   ipcMain.handle('settings:choose-model-directory', async () => {
-    if (dependencyInstall) throw new Error('模型正在安装，暂时不能更改目录。');
+    if (dependencyOperation) throw new Error('模型正在处理，暂时不能更改目录。');
     const result = await dialog.showOpenDialog(mainWindow, {
       title: '选择本地模型安装位置',
       defaultPath: settings.get('modelDirectory'),
@@ -187,18 +285,59 @@ function registerIpc() {
     return settings.set({ modelDirectory: result.filePaths[0] });
   });
 
-  ipcMain.handle('dependencies:status', () => createDependencyManager().getStatus());
-  ipcMain.handle('dependencies:install', async () => {
-    if (dependencyInstall) return dependencyInstall;
+  ipcMain.handle('settings:select-model', async (_event, modelId) => {
+    if (dependencyOperation) throw new Error('模型正在处理，暂时不能切换。');
+    const option = getModelOption(dependencyManifest(), modelId);
+    if (!option || option.id !== modelId) throw new Error('未知的转写模型。');
+    const model = await describeModel(option);
+    if (!model.ready) throw new Error('请先下载并安装这个模型。');
+    settings.set({ selectedModelId: modelId });
+    return getDependencyState(modelId);
+  });
+
+  ipcMain.handle('dependencies:status', () => getDependencyState());
+  ipcMain.handle('dependencies:install', async (_event, payload = {}) => {
+    if (dependencyOperation) throw new Error('另一个模型操作正在进行。');
+    const requestedModelId = payload.modelId || settings.get('selectedModelId');
+    const option = dependencyManifest().modelOptions.find((model) => model.id === requestedModelId);
+    if (!option) throw new Error('请先选择转写模型。');
     const [gpu, vcRuntime] = await Promise.all([probeNvidiaGpu(), probeVcRuntime()]);
     if (!gpu.supported) throw new Error('未检测到可用的 NVIDIA 显卡或驱动，请先安装 NVIDIA 驱动。');
     if (!vcRuntime.supported) throw new Error('请先安装 Microsoft Visual C++ 2015–2022 x64 运行库。');
-    const manager = createDependencyManager();
-    dependencyInstall = manager.installAll();
+
+    const activeModelId = settings.get('selectedModelId');
+    const activeOption = getModelOption(dependencyManifest(), activeModelId);
+    const activeModel = activeOption ? await describeModel(activeOption) : null;
+    const manager = createDependencyManager(option.id);
+    dependencyOperation = manager.installAll().then(async () => {
+      const selectedModelId = chooseModelAfterInstall(activeModelId, activeModel?.ready, option.id);
+      settings.set({ selectedModelId });
+      return getDependencyState(selectedModelId);
+    });
     try {
-      return await dependencyInstall;
+      return await dependencyOperation;
     } finally {
-      dependencyInstall = null;
+      dependencyOperation = null;
+    }
+  });
+
+  ipcMain.handle('dependencies:remove-model', async (_event, payload = {}) => {
+    if (dependencyOperation) throw new Error('另一个模型操作正在进行。');
+    const option = getModelOption(dependencyManifest(), payload.modelId);
+    if (!option || option.id !== payload.modelId) throw new Error('未知的转写模型。');
+
+    const activeModelId = settings.get('selectedModelId');
+    const activeState = await getDependencyState(activeModelId);
+    if (activeModelId === option.id && activeState.ready) {
+      throw new Error('当前正在使用这个模型。请先切换到另一个已安装模型。');
+    }
+
+    const manager = createDependencyManager(option.id);
+    dependencyOperation = manager.removeModel().then(() => getDependencyState(activeModelId));
+    try {
+      return await dependencyOperation;
+    } finally {
+      dependencyOperation = null;
     }
   });
 
@@ -213,15 +352,29 @@ function registerIpc() {
     jobController.cancel();
     return true;
   });
+
+  ipcMain.handle('history:list', () => history.list());
+  ipcMain.handle('history:open', async (_event, id) => {
+    const entry = history.get(id);
+    if (!entry) return '找不到这条历史记录。';
+    return shell.openPath(entry.resultDirectory);
+  });
   ipcMain.handle('shell:open-path', async (_event, targetPath) => {
     if (!targetPath || typeof targetPath !== 'string') return '无效路径';
     return shell.openPath(targetPath);
   });
-  ipcMain.handle('auth:logout', async () => {
-    await clearAuthSession();
-    lastAuthVerification = null;
-    publishAuthStatus({ status: 'logged-out', message: '小鹅通登录已退出。' });
+
+  ipcMain.handle('auth:set-view-bounds', (_event, bounds) => {
+    startupAuthGate.setBounds(bounds);
     return true;
+  });
+  ipcMain.handle('auth:startup-login', async (_event, payload = {}) => {
+    try {
+      return await ensureStartupLogin(payload.sourceUrl);
+    } catch (error) {
+      const result = publishAuthStatus({ status: 'logged-out', message: error.message });
+      return { ...result, error: error.message };
+    }
   });
   ipcMain.handle('auth:ensure-login', async (_event, payload = {}) => {
     try {
@@ -231,14 +384,20 @@ function registerIpc() {
       return { ...result, error: error.message };
     }
   });
-  ipcMain.handle('system:install-vc-runtime', async () => {
-    return installVcRuntime({
-      fetchImpl: (url, options) => net.fetch(url, options),
-      onProgress: (event) => {
-        if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('system:vc-runtime-progress', event);
-      }
-    });
+  ipcMain.handle('auth:logout', async () => {
+    startupAuthGate.close();
+    await clearAuthSession();
+    lastAuthVerification = null;
+    publishAuthStatus({ status: 'logged-out', message: '小鹅通登录已退出。' });
+    return true;
   });
+
+  ipcMain.handle('system:install-vc-runtime', async () => installVcRuntime({
+    fetchImpl: (url, options) => net.fetch(url, options),
+    onProgress: (event) => {
+      if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('system:vc-runtime-progress', event);
+    }
+  }));
 }
 
 const singleInstanceLock = app.requestSingleInstanceLock();
@@ -256,14 +415,18 @@ if (!singleInstanceLock) {
     settings = new SettingsStore(path.join(app.getPath('userData'), 'settings.json'), {
       outputDirectory: path.join(app.getPath('documents'), 'Xiaoe Transcriber'),
       modelDirectory: defaultModelDirectory(),
-      lastSourceUrl: ''
+      lastSourceUrl: '',
+      selectedModelId: ''
     });
+    history = new HistoryStore(path.join(app.getPath('userData'), 'history.json'));
     createMainWindow();
+    startupAuthGate = new StartupAuthGate({ mainWindow, onStatus: publishAuthStatus });
     jobController = new JobController({
       mainWindow,
       settings,
       createDependencyManager,
-      onAuthStatus: publishAuthStatus
+      onAuthStatus: publishAuthStatus,
+      onHistory: (entry) => history.add(entry)
     });
     registerIpc();
   });

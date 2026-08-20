@@ -1,4 +1,5 @@
 const { execFile } = require('node:child_process');
+const os = require('node:os');
 
 function probeNvidiaGpu() {
   return new Promise((resolve) => {
@@ -8,7 +9,8 @@ function probeNvidiaGpu() {
     }, (error, stdout) => {
       if (error) return resolve({ supported: false, detail: '未检测到可用的 NVIDIA 显卡或驱动。' });
       const [name = '', memory = '', driver = ''] = String(stdout).trim().split(',').map((part) => part.trim());
-      resolve({ supported: Boolean(name), name, memory, driver, detail: `${name} · ${memory}` });
+      const memoryMb = Number.parseInt(memory.replace(/[^\d]/g, ''), 10) || 0;
+      resolve({ supported: Boolean(name), name, memory, memoryMb, driver, detail: `${name} · ${memory}` });
     });
   });
 }
@@ -35,4 +37,25 @@ function probeVcRuntime() {
   });
 }
 
-module.exports = { probeNvidiaGpu, probeVcRuntime };
+function recommendWhisperModel({ gpu = {}, totalMemoryBytes = os.totalmem() } = {}) {
+  const gpuMemoryMb = Number(gpu.memoryMb) || 0;
+  const systemMemoryGb = totalMemoryBytes / (1024 ** 3);
+  if (gpuMemoryMb >= 6144 && systemMemoryGb >= 12) return 'large-v3-turbo';
+  if (gpuMemoryMb >= 4096 && systemMemoryGb >= 8) return 'medium';
+  return 'small';
+}
+
+function getSystemProfile(gpu) {
+  const cpu = os.cpus()?.[0]?.model?.trim() || '未知处理器';
+  const totalMemoryBytes = os.totalmem();
+  return {
+    cpu,
+    logicalCores: os.cpus()?.length || 0,
+    totalMemoryBytes,
+    totalMemoryGb: Math.max(1, Math.round(totalMemoryBytes / (1024 ** 3))),
+    platform: `${os.type()} ${os.release()} · ${os.arch()}`,
+    recommendedModelId: recommendWhisperModel({ gpu, totalMemoryBytes })
+  };
+}
+
+module.exports = { getSystemProfile, probeNvidiaGpu, probeVcRuntime, recommendWhisperModel };
