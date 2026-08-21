@@ -31,3 +31,8 @@ test('accepts a fully structured summary whose terms occur in the transcript', (
   const supported = `## 内容概览\n本地转写流程用于处理长视频。\n\n## 核心观点\n- 识别和总结都在本机完成。\n\n## 重要细节\n- 播放窗口保持静音。\n\n## 值得进一步看的部分\n- 可以搜索完整文字稿。`;
   assert.equal(generatedSummaryIsSupported(supported, transcript), true);
 });
+
+test('accepts paraphrased summaries that rephrase instead of quoting', () => {
+  const paraphrased = `## 内容概览\n讲师演示了用显卡加速语音识别并保存文字稿的完整流程。\n\n## 核心观点\n- 长视频可以并发下载分片来加快处理速度。\n- 所有识别和总结都在本机完成，内容不会上传。\n\n## 重要细节\n- 处理长视频时播放窗口保持静音。\n- 总结用于快速判断课程是否值得继续深入。\n\n## 值得进一步看的部分\n- 可以在完整文字稿中搜索细节。`;
+  assert.equal(generatedSummaryIsSupported(paraphrased, transcript), true);
+});

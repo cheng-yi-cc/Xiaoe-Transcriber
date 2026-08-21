@@ -165,7 +165,7 @@ function buildExtractiveSummary(transcript) {
 
   return `## 内容概览
 
-文字稿的高频主题集中在 ${topicText}。以下要点直接摘自逐字稿，以避免小模型补充原文没有的信息。
+文字稿的高频主题集中在 ${topicText}。以下要点直接摘自逐字稿，以避免本地模型补充原文没有的信息。
 
 ## 核心观点
 
@@ -203,7 +203,7 @@ function generatedSummaryIsSupported(summary, transcript) {
         position = normalizedTranscript.indexOf(normalizedAnchor, position + normalizedAnchor.length);
       }
     }
-    if (bestSupported / terms.length < 0.84) return false;
+    if (bestSupported / terms.length < 0.55) return false;
   }
   return true;
 }
