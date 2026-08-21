@@ -128,7 +128,7 @@
         <section class="settings-section">
           <div class="section-title">
             <h2>转写模型</h2>
-            <p>根据显存、内存和稳定性自动推荐</p>
+            <p>根据显存、内存和稳定性自动推荐 · 点击未安装的模型开始下载</p>
           </div>
           <div class="model-list" role="radiogroup" aria-label="选择转写模型">
             <div class="model-row" data-model="small">
@@ -138,7 +138,7 @@
               </label>
               <span><b>466 MB</b><small>2 GB+ 显存</small></span>
               <i data-model-status>适合低配置电脑</i>
-              <div class="model-actions"><button type="button" data-model-primary>下载</button><button type="button" data-model-remove>删除</button></div>
+              <button type="button" class="model-remove hidden" data-model-remove>删除</button>
             </div>
             <div class="model-row" data-model="medium">
               <label class="model-choice" for="modelMedium">
@@ -147,7 +147,7 @@
               </label>
               <span><b>1.5 GB</b><small>4 GB+ 显存</small></span>
               <i data-model-status>兼顾速度与精度</i>
-              <div class="model-actions"><button type="button" data-model-primary>下载</button><button type="button" data-model-remove>删除</button></div>
+              <button type="button" class="model-remove hidden" data-model-remove>删除</button>
             </div>
             <div class="model-row" data-model="large-v3-turbo">
               <label class="model-choice" for="modelLargeTurbo">
@@ -156,7 +156,34 @@
               </label>
               <span><b>1.6 GB</b><small>6 GB+ 显存</small></span>
               <i data-model-status>适合高性能显卡</i>
-              <div class="model-actions"><button type="button" data-model-primary>下载</button><button type="button" data-model-remove>删除</button></div>
+              <button type="button" class="model-remove hidden" data-model-remove>删除</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="section-title">
+            <h2>总结模型</h2>
+            <p>根据显存自动推荐 · 影响总结质量与速度</p>
+          </div>
+          <div class="model-list" role="radiogroup" aria-label="选择总结模型">
+            <div class="model-row" data-summary-model="qwen3-8b">
+              <label class="model-choice" for="summaryModelQwen3">
+                <input id="summaryModelQwen3" type="radio" name="summaryModel" value="qwen3-8b">
+                <span><b>Qwen3 8B</b><small>高质量 · 归纳式总结</small></span>
+              </label>
+              <span><b>4.7 GB</b><small>6 GB+ 显存</small></span>
+              <i data-model-status>推荐 8GB 显存</i>
+              <button type="button" class="model-remove hidden" data-model-remove>删除</button>
+            </div>
+            <div class="model-row" data-summary-model="qwen2.5-1.5b">
+              <label class="model-choice" for="summaryModelQwen25">
+                <input id="summaryModelQwen25" type="radio" name="summaryModel" value="qwen2.5-1.5b">
+                <span><b>Qwen2.5 1.5B</b><small>轻量 · 快速总结</small></span>
+              </label>
+              <span><b>1.0 GB</b><small>2 GB+ 显存</small></span>
+              <i data-model-status>适合低配置电脑</i>
+              <button type="button" class="model-remove hidden" data-model-remove>删除</button>
             </div>
           </div>
         </section>
@@ -166,13 +193,15 @@
             <h2>存储位置</h2>
             <p>模型和文字稿分开管理</p>
           </div>
-          <div class="path-row">
-            <div><small>模型与引擎</small><strong id="modelPath">正在读取…</strong></div>
-            <button type="button" id="chooseModelButton">更改位置</button>
-          </div>
-          <div class="path-row">
-            <div><small>文字稿与总结</small><strong id="outputPath">正在读取…</strong></div>
-            <button type="button" id="chooseOutputButton">更改位置</button>
+          <div class="path-list">
+            <div class="path-row">
+              <div><small>模型与引擎</small><strong id="modelPath">正在读取…</strong></div>
+              <button type="button" id="chooseModelButton">更改位置</button>
+            </div>
+            <div class="path-row">
+              <div><small>文字稿与总结</small><strong id="outputPath">正在读取…</strong></div>
+              <button type="button" id="chooseOutputButton">更改位置</button>
+            </div>
           </div>
         </section>
 
@@ -185,7 +214,7 @@
           <div class="download-summary">
             <small id="downloadSummaryLabel">本地模型</small>
             <strong id="downloadSize">正在计算…</strong>
-            <span id="downloadSummaryDetail">共用引擎和总结模型只下载一次。</span>
+            <span id="downloadSummaryDetail">转写与总结模型可分别切换，共用引擎只下载一次。</span>
           </div>
           <div class="download-progress hidden" id="downloadProgress">
             <div><span id="downloadLabel">准备下载</span><b id="downloadPercent">0%</b></div>

@@ -6,19 +6,22 @@ const { Readable, Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { runProcess } = require('./process-runner.cjs');
 
-function getModelOption(manifest, modelId) {
-  const options = Array.isArray(manifest.modelOptions) ? manifest.modelOptions : [];
-  return options.find((option) => option.id === modelId) || options[0] || null;
+function getModelOption(options, modelId) {
+  const list = Array.isArray(options) ? options : [];
+  return list.find((option) => option.id === modelId) || null;
 }
 
-function selectManifestForModel(manifest, modelId) {
-  const modelOption = getModelOption(manifest, modelId);
+function selectManifestForModel(manifest, modelId, summaryModelId) {
+  const modelOption = getModelOption(manifest.modelOptions, modelId);
+  const summaryOption = getModelOption(manifest.summaryOptions, summaryModelId);
   const components = manifest.components.filter((component) => (
-    !component.modelOptionId || component.modelOptionId === modelOption?.id
+    (!component.modelOptionId || component.modelOptionId === modelOption?.id)
+    && (!component.summaryOptionId || component.summaryOptionId === summaryOption?.id)
   ));
   return {
     ...manifest,
     modelOption,
+    summaryOption,
     estimatedInstalledBytes: modelOption?.estimatedInstalledBytes || manifest.estimatedInstalledBytes,
     components
   };
@@ -104,6 +107,7 @@ class DependencyManager {
     return {
       ready: components.every((component) => component.ready),
       modelId: this.manifest.modelOption?.id || null,
+      summaryModelId: this.manifest.summaryOption?.id || null,
       rootDirectory: this.rootDirectory,
       estimatedInstalledBytes: this.manifest.estimatedInstalledBytes,
       totalDownloadBytes: this.totalDownloadBytes,
@@ -142,16 +146,19 @@ class DependencyManager {
     return finalStatus;
   }
 
-  async removeModel() {
-    const modelOption = this.manifest.modelOption;
+  async removeModel(kind = 'transcribe') {
+    const isSummary = kind === 'summary';
+    const option = isSummary ? this.manifest.summaryOption : this.manifest.modelOption;
+    const optionField = isSummary ? 'summaryOptionId' : 'modelOptionId';
+    if (!option) throw new Error(isSummary ? '找不到要删除的总结模型。' : '找不到要删除的转写模型。');
     const component = this.manifest.components.find((item) => (
-      item.id === modelOption?.componentId && item.modelOptionId === modelOption?.id
+      item.id === option.componentId && item[optionField] === option.id
     ));
-    if (!component) throw new Error('找不到要删除的转写模型。');
+    if (!component) throw new Error(isSummary ? '找不到要删除的总结模型。' : '找不到要删除的转写模型。');
 
     const status = await this.getStatus();
     const installed = status.components.find((item) => item.id === component.id)?.ready;
-    if (!installed) throw new Error(`${modelOption.label} 尚未安装。`);
+    if (!installed) throw new Error(`${option.label} 尚未安装。`);
 
     await fsp.rm(this.componentDirectory(component.id), { recursive: true, force: true });
     return this.getStatus();

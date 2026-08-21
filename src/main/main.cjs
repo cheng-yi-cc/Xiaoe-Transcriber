@@ -49,8 +49,8 @@ function dependencyManifest() {
   return manifestCache;
 }
 
-function createDependencyManager(modelId = settings.get('selectedModelId')) {
-  const manifest = selectManifestForModel(dependencyManifest(), modelId);
+function createDependencyManager(modelId = settings.get('selectedModelId'), summaryModelId = settings.get('selectedSummaryModelId')) {
+  const manifest = selectManifestForModel(dependencyManifest(), modelId, summaryModelId);
   return new DependencyManager({
     rootDirectory: settings.get('modelDirectory'),
     manifest,
@@ -65,15 +65,23 @@ function componentDownloadBytes(component) {
   return component.downloads.reduce((sum, download) => sum + download.size, 0);
 }
 
-async function describeModel(option) {
-  const manager = createDependencyManager(option.id);
-  const status = await manager.getStatus();
+function summarizeManagerStatus(manager, status) {
   const readyById = new Map(status.components.map((component) => [component.id, component.ready]));
   const remainingDownloadBytes = manager.manifest.components
     .filter((component) => !readyById.get(component.id))
     .reduce((sum, component) => sum + componentDownloadBytes(component), 0);
+  return { readyById, remainingDownloadBytes };
+}
+
+async function describeModel(option, kind = 'transcribe') {
+  const manager = kind === 'summary'
+    ? createDependencyManager(settings.get('selectedModelId'), option.id)
+    : createDependencyManager(option.id, settings.get('selectedSummaryModelId'));
+  const status = await manager.getStatus();
+  const { readyById, remainingDownloadBytes } = summarizeManagerStatus(manager, status);
   return {
     ...option,
+    kind,
     ready: status.ready,
     modelInstalled: Boolean(status.components.find((component) => component.id === option.componentId)?.ready),
     totalDownloadBytes: status.totalDownloadBytes,
@@ -81,13 +89,15 @@ async function describeModel(option) {
   };
 }
 
+const describeSummaryModel = (option) => describeModel(option, 'summary');
+
 async function resolveSelectedModelId(systemProfile) {
   const manifest = dependencyManifest();
   const configured = settings.get('selectedModelId');
   const configuredOption = manifest.modelOptions.find((option) => option.id === configured);
   if (configuredOption && (await describeModel(configuredOption)).ready) return configured;
 
-  const models = await Promise.all(manifest.modelOptions.map(describeModel));
+  const models = await Promise.all(manifest.modelOptions.map((option) => describeModel(option)));
   const installedModel = models.find((model) => (
     model.id === systemProfile.recommendedModelId && model.ready
   )) || models.find((model) => model.ready);
@@ -96,23 +106,41 @@ async function resolveSelectedModelId(systemProfile) {
   return selectedModelId;
 }
 
-async function getDependencyState(selectedModelId = settings.get('selectedModelId')) {
+async function resolveSelectedSummaryModelId(systemProfile) {
+  const manifest = dependencyManifest();
+  const configured = settings.get('selectedSummaryModelId');
+  const configuredOption = manifest.summaryOptions.find((option) => option.id === configured);
+  if (configuredOption && (await describeSummaryModel(configuredOption)).modelInstalled) return configured;
+
+  const models = await Promise.all(manifest.summaryOptions.map((option) => describeSummaryModel(option)));
+  const installedModel = models.find((model) => (
+    model.id === systemProfile.recommendedSummaryModelId && model.modelInstalled
+  )) || models.find((model) => model.modelInstalled);
+  const selectedSummaryModelId = installedModel?.id || configuredOption?.id || systemProfile.recommendedSummaryModelId;
+  settings.set({ selectedSummaryModelId });
+  return selectedSummaryModelId;
+}
+
+async function getDependencyState(selectedModelId = settings.get('selectedModelId'), selectedSummaryModelId = settings.get('selectedSummaryModelId')) {
   const manifest = dependencyManifest();
   const fallbackId = manifest.modelOptions[0]?.id;
-  const normalizedId = getModelOption(manifest, selectedModelId)?.id || fallbackId;
-  const manager = createDependencyManager(normalizedId);
+  const fallbackSummaryId = manifest.summaryOptions[0]?.id;
+  const normalizedId = getModelOption(manifest.modelOptions, selectedModelId)?.id || fallbackId;
+  const normalizedSummaryId = getModelOption(manifest.summaryOptions, selectedSummaryModelId)?.id || fallbackSummaryId;
+  const manager = createDependencyManager(normalizedId, normalizedSummaryId);
   const status = await manager.getStatus();
-  const readyById = new Map(status.components.map((component) => [component.id, component.ready]));
-  const remainingDownloadBytes = manager.manifest.components
-    .filter((component) => !readyById.get(component.id))
-    .reduce((sum, component) => sum + componentDownloadBytes(component), 0);
-  const models = await Promise.all(manifest.modelOptions.map(describeModel));
+  const { readyById, remainingDownloadBytes } = summarizeManagerStatus(manager, status);
+  const models = await Promise.all(manifest.modelOptions.map((option) => describeModel(option)));
+  const summaryModels = await Promise.all(manifest.summaryOptions.map((option) => describeSummaryModel(option)));
   return {
     ...status,
     selectedModelId: normalizedId,
-    selectedModel: getModelOption(manifest, normalizedId),
+    selectedModel: getModelOption(manifest.modelOptions, normalizedId),
+    selectedSummaryModelId: normalizedSummaryId,
+    selectedSummaryModel: getModelOption(manifest.summaryOptions, normalizedSummaryId),
     remainingDownloadBytes,
-    models
+    models,
+    summaryModels
   };
 }
 
@@ -230,7 +258,8 @@ async function getAppState() {
   const [gpu, vcRuntime] = await Promise.all([probeNvidiaGpu(), probeVcRuntime()]);
   const system = getSystemProfile(gpu);
   const selectedModelId = await resolveSelectedModelId(system);
-  const dependencies = await getDependencyState(selectedModelId);
+  const selectedSummaryModelId = await resolveSelectedSummaryModelId(system);
+  const dependencies = await getDependencyState(selectedModelId, selectedSummaryModelId);
   if (dependencies.ready) {
     try {
       await createDependencyManager(selectedModelId).verifyInstalledEngines();
@@ -287,7 +316,7 @@ function registerIpc() {
 
   ipcMain.handle('settings:select-model', async (_event, modelId) => {
     if (dependencyOperation) throw new Error('模型正在处理，暂时不能切换。');
-    const option = getModelOption(dependencyManifest(), modelId);
+    const option = getModelOption(dependencyManifest().modelOptions, modelId);
     if (!option || option.id !== modelId) throw new Error('未知的转写模型。');
     const model = await describeModel(option);
     if (!model.ready) throw new Error('请先下载并安装这个模型。');
@@ -295,25 +324,52 @@ function registerIpc() {
     return getDependencyState(modelId);
   });
 
+  ipcMain.handle('settings:select-summary-model', async (_event, modelId) => {
+    if (dependencyOperation) throw new Error('模型正在处理，暂时不能切换。');
+    const option = getModelOption(dependencyManifest().summaryOptions, modelId);
+    if (!option || option.id !== modelId) throw new Error('未知的总结模型。');
+    const model = await describeSummaryModel(option);
+    if (!model.modelInstalled) throw new Error('请先下载并安装这个总结模型。');
+    settings.set({ selectedSummaryModelId: modelId });
+    return getDependencyState(undefined, modelId);
+  });
+
   ipcMain.handle('dependencies:status', () => getDependencyState());
   ipcMain.handle('dependencies:install', async (_event, payload = {}) => {
     if (dependencyOperation) throw new Error('另一个模型操作正在进行。');
-    const requestedModelId = payload.modelId || settings.get('selectedModelId');
-    const option = dependencyManifest().modelOptions.find((model) => model.id === requestedModelId);
-    if (!option) throw new Error('请先选择转写模型。');
+    const kind = payload.kind === 'summary' ? 'summary' : 'transcribe';
+    const isSummary = kind === 'summary';
+    const manifest = dependencyManifest();
+    const requestedModelId = payload.modelId || (isSummary
+      ? settings.get('selectedSummaryModelId')
+      : settings.get('selectedModelId'));
+    const options = isSummary ? manifest.summaryOptions : manifest.modelOptions;
+    const option = options.find((model) => model.id === requestedModelId);
+    if (!option) throw new Error(isSummary ? '请先选择总结模型。' : '请先选择转写模型。');
     const [gpu, vcRuntime] = await Promise.all([probeNvidiaGpu(), probeVcRuntime()]);
     if (!gpu.supported) throw new Error('未检测到可用的 NVIDIA 显卡或驱动，请先安装 NVIDIA 驱动。');
     if (!vcRuntime.supported) throw new Error('请先安装 Microsoft Visual C++ 2015–2022 x64 运行库。');
 
-    const activeModelId = settings.get('selectedModelId');
-    const activeOption = getModelOption(dependencyManifest(), activeModelId);
-    const activeModel = activeOption ? await describeModel(activeOption) : null;
-    const manager = createDependencyManager(option.id);
-    dependencyOperation = manager.installAll().then(async () => {
-      const selectedModelId = chooseModelAfterInstall(activeModelId, activeModel?.ready, option.id);
-      settings.set({ selectedModelId });
-      return getDependencyState(selectedModelId);
-    });
+    let operation;
+    if (isSummary) {
+      const activeModelId = settings.get('selectedModelId');
+      const manager = createDependencyManager(activeModelId, option.id);
+      operation = manager.installAll().then(async () => {
+        settings.set({ selectedSummaryModelId: option.id });
+        return getDependencyState(activeModelId, option.id);
+      });
+    } else {
+      const activeModelId = settings.get('selectedModelId');
+      const activeOption = getModelOption(manifest.modelOptions, activeModelId);
+      const activeModel = activeOption ? await describeModel(activeOption) : null;
+      const manager = createDependencyManager(option.id, settings.get('selectedSummaryModelId'));
+      operation = manager.installAll().then(async () => {
+        const selectedModelId = chooseModelAfterInstall(activeModelId, activeModel?.ready, option.id);
+        settings.set({ selectedModelId });
+        return getDependencyState(selectedModelId);
+      });
+    }
+    dependencyOperation = operation;
     try {
       return await dependencyOperation;
     } finally {
@@ -323,17 +379,33 @@ function registerIpc() {
 
   ipcMain.handle('dependencies:remove-model', async (_event, payload = {}) => {
     if (dependencyOperation) throw new Error('另一个模型操作正在进行。');
-    const option = getModelOption(dependencyManifest(), payload.modelId);
-    if (!option || option.id !== payload.modelId) throw new Error('未知的转写模型。');
+    const kind = payload.kind === 'summary' ? 'summary' : 'transcribe';
+    const isSummary = kind === 'summary';
+    const manifest = dependencyManifest();
+    const options = isSummary ? manifest.summaryOptions : manifest.modelOptions;
+    const option = getModelOption(options, payload.modelId);
+    if (!option || option.id !== payload.modelId) throw new Error(isSummary ? '未知的总结模型。' : '未知的转写模型。');
 
     const activeModelId = settings.get('selectedModelId');
-    const activeState = await getDependencyState(activeModelId);
-    if (activeModelId === option.id && activeState.ready) {
-      throw new Error('当前正在使用这个模型。请先切换到另一个已安装模型。');
+    if (isSummary) {
+      const activeSummaryModelId = settings.get('selectedSummaryModelId');
+      if (activeSummaryModelId === option.id) {
+        const activeState = await getDependencyState(activeModelId, activeSummaryModelId);
+        const activeComponent = activeState.components.find((item) => item.id === option.componentId);
+        if (activeComponent?.ready) {
+          throw new Error('当前正在使用这个总结模型。请先切换到另一个已安装的总结模型。');
+        }
+      }
+      const manager = createDependencyManager(activeModelId, option.id);
+      dependencyOperation = manager.removeModel('summary').then(() => getDependencyState());
+    } else {
+      const activeState = await getDependencyState(activeModelId);
+      if (activeModelId === option.id && activeState.ready) {
+        throw new Error('当前正在使用这个模型。请先切换到另一个已安装模型。');
+      }
+      const manager = createDependencyManager(option.id, settings.get('selectedSummaryModelId'));
+      dependencyOperation = manager.removeModel().then(() => getDependencyState(activeModelId));
     }
-
-    const manager = createDependencyManager(option.id);
-    dependencyOperation = manager.removeModel().then(() => getDependencyState(activeModelId));
     try {
       return await dependencyOperation;
     } finally {
@@ -416,7 +488,8 @@ if (!singleInstanceLock) {
       outputDirectory: path.join(app.getPath('documents'), 'Xiaoe Transcriber'),
       modelDirectory: defaultModelDirectory(),
       lastSourceUrl: '',
-      selectedModelId: ''
+      selectedModelId: '',
+      selectedSummaryModelId: ''
     });
     history = new HistoryStore(path.join(app.getPath('userData'), 'history.json'));
     createMainWindow();

@@ -45,6 +45,13 @@ function recommendWhisperModel({ gpu = {}, totalMemoryBytes = os.totalmem() } = 
   return 'small';
 }
 
+function recommendSummaryModel({ gpu = {}, totalMemoryBytes = os.totalmem() } = {}) {
+  const gpuMemoryMb = Number(gpu.memoryMb) || 0;
+  const systemMemoryGb = totalMemoryBytes / (1024 ** 3);
+  if (gpuMemoryMb >= 6144 && systemMemoryGb >= 12) return 'qwen3-8b';
+  return 'qwen2.5-1.5b';
+}
+
 function getSystemProfile(gpu) {
   const cpu = os.cpus()?.[0]?.model?.trim() || '未知处理器';
   const totalMemoryBytes = os.totalmem();
@@ -54,8 +61,9 @@ function getSystemProfile(gpu) {
     totalMemoryBytes,
     totalMemoryGb: Math.max(1, Math.round(totalMemoryBytes / (1024 ** 3))),
     platform: `${os.type()} ${os.release()} · ${os.arch()}`,
-    recommendedModelId: recommendWhisperModel({ gpu, totalMemoryBytes })
+    recommendedModelId: recommendWhisperModel({ gpu, totalMemoryBytes }),
+    recommendedSummaryModelId: recommendSummaryModel({ gpu, totalMemoryBytes })
   };
 }
 
-module.exports = { getSystemProfile, probeNvidiaGpu, probeVcRuntime, recommendWhisperModel };
+module.exports = { getSystemProfile, probeNvidiaGpu, probeVcRuntime, recommendSummaryModel, recommendWhisperModel };

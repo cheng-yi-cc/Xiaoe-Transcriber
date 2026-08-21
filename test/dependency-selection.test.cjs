@@ -16,11 +16,21 @@ function loadManifest() {
 
 test('selected model manifest includes shared components and exactly one Whisper model', () => {
   const manifest = loadManifest();
-  const selected = selectManifestForModel(manifest, 'medium');
+  const selected = selectManifestForModel(manifest, 'medium', 'qwen3-8b');
   assert.equal(selected.modelOption.id, 'medium');
+  assert.equal(selected.summaryOption.id, 'qwen3-8b');
   assert.ok(selected.components.some((item) => item.id === 'ffmpeg'));
   assert.ok(selected.components.some((item) => item.id === 'whisper-model-medium'));
+  assert.ok(selected.components.some((item) => item.id === 'summary-model'));
   assert.equal(selected.components.filter((item) => item.modelOptionId).length, 1);
+  assert.equal(selected.components.filter((item) => item.summaryOptionId).length, 1);
+});
+
+test('switching the summary model swaps only the summary component', () => {
+  const manifest = loadManifest();
+  const selected = selectManifestForModel(manifest, 'medium', 'qwen2.5-1.5b');
+  assert.ok(selected.components.some((item) => item.id === 'summary-model-lite'));
+  assert.ok(!selected.components.some((item) => item.id === 'summary-model'));
 });
 
 test('downloading an extra model does not replace a ready active model', () => {
@@ -44,7 +54,7 @@ test('removing a model preserves shared components and other model directories',
   const rootDirectory = await fsp.mkdtemp(path.join(os.tmpdir(), 'xiaoe-model-remove-'));
   t.after(() => fsp.rm(rootDirectory, { recursive: true, force: true }));
 
-  const manifest = selectManifestForModel(loadManifest(), 'small');
+  const manifest = selectManifestForModel(loadManifest(), 'small', 'qwen3-8b');
   const manager = new DependencyManager({ rootDirectory, manifest });
   const modelComponent = manifest.components.find((item) => item.modelOptionId === 'small');
   const modelDirectory = manager.componentDirectory(modelComponent.id);
@@ -63,4 +73,25 @@ test('removing a model preserves shared components and other model directories',
   assert.equal(fs.existsSync(modelDirectory), false);
   assert.equal(fs.existsSync(path.join(sharedDirectory, 'keep.txt')), true);
   assert.equal(fs.existsSync(path.join(otherModelDirectory, 'keep.txt')), true);
+});
+
+test('removing a summary model keeps the whisper model and shared components', async (t) => {
+  const rootDirectory = await fsp.mkdtemp(path.join(os.tmpdir(), 'xiaoe-summary-remove-'));
+  t.after(() => fsp.rm(rootDirectory, { recursive: true, force: true }));
+
+  const manifest = selectManifestForModel(loadManifest(), 'small', 'qwen2.5-1.5b');
+  const manager = new DependencyManager({ rootDirectory, manifest });
+  const summaryComponent = manifest.components.find((item) => item.summaryOptionId === 'qwen2.5-1.5b');
+  const whisperComponent = manifest.components.find((item) => item.modelOptionId === 'small');
+  for (const component of [summaryComponent, whisperComponent]) {
+    const directory = manager.componentDirectory(component.id);
+    await fsp.mkdir(directory, { recursive: true });
+    await fsp.writeFile(path.join(directory, '.installed.json'), JSON.stringify({ version: component.version }));
+    await fsp.writeFile(path.join(directory, component.requiredFiles[0]), 'model');
+  }
+
+  await manager.removeModel('summary');
+
+  assert.equal(fs.existsSync(manager.componentDirectory(summaryComponent.id)), false);
+  assert.equal(fs.existsSync(manager.componentDirectory(whisperComponent.id)), true);
 });

@@ -117,7 +117,9 @@ class JobController {
       this.send({ stage: 'summarize', percent: 77, message: '正在加载本地总结模型…', transcriptPath });
 
       const llamaServerPath = await dependencies.resolveRequiredFile('llama-engine', 'llama-server.exe');
-      const summaryModelPath = await dependencies.resolveRequiredFile('summary-model', 'qwen3-8b-q4_k_m.gguf');
+      const summaryOption = dependencies.manifest.summaryOption;
+      if (!summaryOption) throw new Error('尚未选择总结模型。');
+      const summaryModelPath = await dependencies.resolveRequiredFile(summaryOption.componentId, summaryOption.fileName);
       const summary = await summarizeTranscript({
         llamaServerPath,
         modelPath: summaryModelPath,

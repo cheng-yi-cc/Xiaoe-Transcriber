@@ -36,6 +36,7 @@ const elements = {
   systemName: document.querySelector('#systemName'),
   hardwareState: document.querySelector('#hardwareState'),
   modelRows: [...document.querySelectorAll('[data-model]')],
+  summaryRows: [...document.querySelectorAll('[data-summary-model]')],
   modelPath: document.querySelector('#modelPath'),
   outputPath: document.querySelector('#outputPath'),
   chooseModelButton: document.querySelector('#chooseModelButton'),
@@ -60,6 +61,7 @@ const state = {
   busy: false,
   installing: false,
   installTargetModelId: null,
+  installKind: null,
   modelOperation: null,
   resultDirectory: null,
   currentPage: 'workspace'
@@ -67,6 +69,7 @@ const state = {
 
 const stageOrder = ['capture', 'download', 'transcribe', 'summarize'];
 let toastTimer = null;
+let lastModelAction = { key: '', at: 0 };
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB';
@@ -177,6 +180,20 @@ function modelById(modelId) {
   return state.app?.dependencies?.models?.find((model) => model.id === modelId) || null;
 }
 
+function summaryModelById(modelId) {
+  return state.app?.dependencies?.summaryModels?.find((model) => model.id === modelId) || null;
+}
+
+function modelOfKind(kind, modelId) {
+  return kind === 'summary' ? summaryModelById(modelId) : modelById(modelId);
+}
+
+function selectedIdForKind(kind) {
+  return kind === 'summary'
+    ? state.app?.dependencies?.selectedSummaryModelId
+    : state.app?.dependencies?.selectedModelId;
+}
+
 function renderPrerequisites() {
   const { gpu, vcRuntime, dependencies } = state.app;
   let message = '';
@@ -191,68 +208,67 @@ function renderPrerequisites() {
   elements.runtimeButton.classList.toggle('hidden', !showRuntime);
 }
 
-function renderModels() {
-  const { dependencies, gpu, system } = state.app;
-  const selectedId = dependencies.selectedModelId;
-  for (const row of elements.modelRows) {
-    const model = modelById(row.dataset.model);
-    const input = row.querySelector('input');
-    const status = row.querySelector('[data-model-status]');
-    const primaryButton = row.querySelector('[data-model-primary]');
-    const removeButton = row.querySelector('[data-model-remove]');
-    const selected = model?.id === selectedId && model?.ready;
-    const recommended = model?.id === system.recommendedModelId;
-    const incompatible = gpu.supported && gpu.memoryMb < (model?.minimumVramMb || 0);
-    const operationTarget = state.installing && state.installTargetModelId === model?.id;
-    input.checked = selected;
-    input.disabled = !model?.ready || state.installing || state.busy;
-    row.classList.toggle('selected', selected);
-    row.classList.toggle('incompatible', incompatible);
+function renderModelRow(row, kind) {
+  const modelId = kind === 'summary' ? row.dataset.summaryModel : row.dataset.model;
+  const model = modelOfKind(kind, modelId);
+  const { gpu, system } = state.app;
+  const input = row.querySelector('input');
+  const status = row.querySelector('[data-model-status]');
+  const removeButton = row.querySelector('[data-model-remove]');
+  const selected = model?.id === selectedIdForKind(kind) && model?.ready;
+  const recommended = model?.id === (kind === 'summary' ? system.recommendedSummaryModelId : system.recommendedModelId);
+  const incompatible = gpu.supported && gpu.memoryMb < (model?.minimumVramMb || 0);
+  const operationTarget = state.installing
+    && state.installKind === kind
+    && state.installTargetModelId === model?.id;
+  input.checked = selected;
+  input.disabled = state.installing || state.busy;
+  row.classList.toggle('selected', selected);
+  row.classList.toggle('incompatible', incompatible);
+
+  if (operationTarget) {
+    status.textContent = state.modelOperation === 'remove' ? '删除中…' : '下载中…';
+  } else {
     const labels = [];
     if (selected) labels.push('使用中');
     else if (model?.modelInstalled) labels.push('已安装');
-    if (recommended) labels.push('推荐');
+    if (recommended && !selected) labels.push('推荐');
     if (incompatible) labels.push('显存不足');
     status.textContent = labels.join(' · ') || model?.suitability || '';
-
-    if (operationTarget) {
-      primaryButton.textContent = state.modelOperation === 'remove' ? '删除中' : '下载中';
-    } else if (selected) {
-      primaryButton.textContent = '使用中';
-    } else if (model?.ready) {
-      primaryButton.textContent = '使用';
-    } else if (model?.modelInstalled) {
-      primaryButton.textContent = '完成安装';
-    } else {
-      primaryButton.textContent = '下载';
-    }
-    primaryButton.disabled = selected || state.installing || state.busy || !gpu.supported || !state.app.vcRuntime.supported;
-    removeButton.classList.toggle('hidden', !model?.modelInstalled || selected);
-    removeButton.disabled = state.installing || state.busy;
   }
+
+  removeButton.classList.toggle('hidden', !model?.modelInstalled || selected);
+  removeButton.disabled = state.installing || state.busy;
+}
+
+function renderModels() {
+  for (const row of elements.modelRows) renderModelRow(row, 'transcribe');
+  for (const row of elements.summaryRows) renderModelRow(row, 'summary');
 }
 
 function renderDownloadState() {
   const { dependencies } = state.app;
-  const installedCount = dependencies.models.filter((model) => model.modelInstalled).length;
+  const allModels = [...dependencies.models, ...dependencies.summaryModels];
+  const installedCount = allModels.filter((model) => model.modelInstalled).length;
   const selected = modelById(dependencies.selectedModelId);
+  const selectedSummary = summaryModelById(dependencies.selectedSummaryModelId);
   if (state.installing) {
-    const target = modelById(state.installTargetModelId);
+    const target = modelOfKind(state.installKind, state.installTargetModelId);
     elements.downloadSummaryLabel.textContent = state.modelOperation === 'remove' ? '正在删除' : '正在下载';
     elements.downloadSize.textContent = target?.label || '模型处理中';
     elements.downloadSummaryDetail.textContent = state.modelOperation === 'remove'
-      ? '只删除这个转写模型，共用引擎与其他模型会保留。'
+      ? '只删除这个模型，共用引擎与其他模型会保留。'
       : '下载完成后会校验 SHA-256，并运行本地引擎自检。';
   } else {
     elements.downloadSummaryLabel.textContent = '本地模型';
-    elements.downloadSize.textContent = `${installedCount} / ${dependencies.models.length} 已安装`;
+    elements.downloadSize.textContent = `${installedCount} / ${allModels.length} 已安装`;
     elements.downloadSummaryDetail.textContent = dependencies.ready
-      ? `当前使用 ${selected?.label || '本地模型'}；共用引擎与总结模型继续复用。`
-      : '下载一个模型后即可开始转写；共用引擎与总结模型只下载一次。';
+      ? `转写：${selected?.label || '—'} · 总结：${selectedSummary?.label || '—'}`
+      : '点击未安装的模型开始下载；共用引擎只下载一次。';
   }
   elements.startButton.disabled = state.busy || !dependencies.ready;
   elements.taskNote.textContent = dependencies.ready
-    ? `${dependencies.selectedModel?.label || '本地模型'} 已就绪 · 处理时保持静音`
+    ? `${selected?.label || '本地模型'} + ${selectedSummary?.label || ''} 已就绪 · 处理时保持静音`
     : '尚未安装所选模型 · 请前往设置下载';
 }
 
@@ -408,6 +424,19 @@ async function selectModel(modelId) {
   }
 }
 
+async function selectSummaryModel(modelId) {
+  try {
+    const dependencies = await window.xiaoeApp.selectSummaryModel(modelId);
+    state.app.dependencies = dependencies;
+    state.app.settings.selectedSummaryModelId = dependencies.selectedSummaryModelId;
+    renderModels();
+    renderDownloadState();
+  } catch (error) {
+    showToast(error.message || String(error));
+    renderModels();
+  }
+}
+
 async function chooseDirectory(type) {
   try {
     const result = type === 'model'
@@ -421,10 +450,11 @@ async function chooseDirectory(type) {
   }
 }
 
-async function installDependencies(modelId) {
-  const model = modelById(modelId);
+async function installDependencies(modelId, kind = 'transcribe') {
+  const model = modelOfKind(kind, modelId);
   state.installing = true;
   state.installTargetModelId = modelId;
+  state.installKind = kind;
   state.modelOperation = 'download';
   elements.downloadProgress.classList.remove('hidden');
   elements.downloadLabel.textContent = '准备下载';
@@ -435,9 +465,10 @@ async function installDependencies(modelId) {
   renderModels();
   renderDownloadState();
   try {
-    const dependencies = await window.xiaoeApp.installDependencies(modelId);
+    const dependencies = await window.xiaoeApp.installDependencies(modelId, kind);
     state.app.dependencies = dependencies;
     state.app.settings.selectedModelId = dependencies.selectedModelId;
+    state.app.settings.selectedSummaryModelId = dependencies.selectedSummaryModelId;
     elements.downloadLabel.textContent = '模型与引擎已就绪';
     elements.downloadPercent.textContent = '100%';
     elements.downloadBar.style.width = '100%';
@@ -449,6 +480,7 @@ async function installDependencies(modelId) {
   } finally {
     state.installing = false;
     state.installTargetModelId = null;
+    state.installKind = null;
     state.modelOperation = null;
     elements.chooseModelButton.disabled = false;
     elements.chooseOutputButton.disabled = false;
@@ -457,8 +489,8 @@ async function installDependencies(modelId) {
   }
 }
 
-async function removeModel(modelId) {
-  const model = modelById(modelId);
+async function removeModel(modelId, kind = 'transcribe') {
+  const model = modelOfKind(kind, modelId);
   if (!model?.modelInstalled) return;
   const confirmed = window.confirm(
     `删除 ${model.label}？\n\n将释放约 ${formatBytes(model.downloadBytes)}，共用引擎和其他模型会保留。`
@@ -467,6 +499,7 @@ async function removeModel(modelId) {
 
   state.installing = true;
   state.installTargetModelId = modelId;
+  state.installKind = kind;
   state.modelOperation = 'remove';
   elements.downloadProgress.classList.add('hidden');
   elements.chooseModelButton.disabled = true;
@@ -474,7 +507,7 @@ async function removeModel(modelId) {
   renderModels();
   renderDownloadState();
   try {
-    const dependencies = await window.xiaoeApp.removeModel(modelId);
+    const dependencies = await window.xiaoeApp.removeModel(modelId, kind);
     state.app.dependencies = dependencies;
     showToast(`${model.label} 已删除`);
   } catch (error) {
@@ -482,6 +515,7 @@ async function removeModel(modelId) {
   } finally {
     state.installing = false;
     state.installTargetModelId = null;
+    state.installKind = null;
     state.modelOperation = null;
     elements.chooseModelButton.disabled = false;
     elements.chooseOutputButton.disabled = false;
@@ -668,14 +702,48 @@ elements.authSourceUrl.addEventListener('input', () => {
   elements.authLinkMessage.classList.remove('error');
 });
 for (const button of elements.navButtons) button.addEventListener('click', () => showPage(button.dataset.pageTarget));
-for (const row of elements.modelRows) {
-  const modelId = row.dataset.model;
-  row.querySelector('input').addEventListener('change', (event) => void selectModel(event.target.value));
-  row.querySelector('[data-model-primary]').addEventListener('click', () => {
-    if (modelById(modelId)?.ready) void selectModel(modelId);
-    else void installDependencies(modelId);
+
+async function handleModelAction(kind, modelId) {
+  if (state.installing || state.busy) return;
+  const model = modelOfKind(kind, modelId);
+  if (!model) return;
+  if (model.ready) {
+    if (selectedIdForKind(kind) === modelId) return;
+    if (kind === 'summary') await selectSummaryModel(modelId);
+    else await selectModel(modelId);
+    return;
+  }
+  if (model.modelInstalled) {
+    await installDependencies(modelId, kind);
+    return;
+  }
+  const confirmed = window.confirm(
+    `下载 ${model.label}？\n\n需要下载约 ${formatBytes(model.downloadBytes)}，完成后会自动启用。`
+  );
+  if (!confirmed) {
+    renderModels();
+    return;
+  }
+  await installDependencies(modelId, kind);
+}
+
+function requestModelAction(kind, modelId) {
+  const key = `${kind}:${modelId}`;
+  const now = Date.now();
+  if (lastModelAction.key === key && now - lastModelAction.at < 400) return;
+  lastModelAction = { key, at: now };
+  void handleModelAction(kind, modelId);
+}
+
+for (const row of [...elements.modelRows, ...elements.summaryRows]) {
+  const kind = row.dataset.summaryModel ? 'summary' : 'transcribe';
+  const modelId = row.dataset.summaryModel || row.dataset.model;
+  row.addEventListener('click', (event) => {
+    if (event.target.closest('[data-model-remove]')) return;
+    requestModelAction(kind, modelId);
   });
-  row.querySelector('[data-model-remove]').addEventListener('click', () => void removeModel(modelId));
+  row.querySelector('input').addEventListener('change', () => requestModelAction(kind, modelId));
+  row.querySelector('[data-model-remove]').addEventListener('click', () => void removeModel(modelId, kind));
 }
 elements.logoutButton.addEventListener('click', async () => {
   if (!window.confirm('退出后需要重新微信扫码才能进入应用。确定退出吗？')) return;

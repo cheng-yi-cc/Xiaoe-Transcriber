@@ -36,6 +36,28 @@
       "suitability": "适合高性能显卡"
     }
   ],
+  "summaryOptions": [
+    {
+      "id": "qwen3-8b",
+      "label": "Qwen3 8B",
+      "componentId": "summary-model",
+      "fileName": "qwen3-8b-q4_k_m.gguf",
+      "downloadBytes": 5027783488,
+      "minimumVramMb": 6144,
+      "description": "高质量 · 归纳式总结",
+      "suitability": "推荐 8GB 显存"
+    },
+    {
+      "id": "qwen2.5-1.5b",
+      "label": "Qwen2.5 1.5B",
+      "componentId": "summary-model-lite",
+      "fileName": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+      "downloadBytes": 1117320736,
+      "minimumVramMb": 2048,
+      "description": "轻量 · 快速总结",
+      "suitability": "适合低配置电脑"
+    }
+  ],
   "components": [
     {
       "id": "ffmpeg",
@@ -141,6 +163,7 @@
       "id": "summary-model",
       "label": "Qwen3 8B 本地总结模型",
       "version": "qwen3-8b-q4_k_m",
+      "summaryOptionId": "qwen3-8b",
       "downloads": [
         {
           "url": "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/6a569868d07d3bd59e8b97fb001bf8c0b254bb20/Qwen3-8B-Q4_K_M.gguf?download=true",
@@ -151,6 +174,22 @@
         }
       ],
       "requiredFiles": ["qwen3-8b-q4_k_m.gguf"]
+    },
+    {
+      "id": "summary-model-lite",
+      "label": "Qwen2.5 1.5B 本地总结模型",
+      "version": "qwen2.5-1.5b-q4_k_m",
+      "summaryOptionId": "qwen2.5-1.5b",
+      "downloads": [
+        {
+          "url": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/dd26da440ef0330c47919d1ecae0966d24022222/qwen2.5-1.5b-instruct-q4_k_m.gguf?download=true",
+          "fileName": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+          "sha256": "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
+          "size": 1117320736,
+          "archive": false
+        }
+      ],
+      "requiredFiles": ["qwen2.5-1.5b-instruct-q4_k_m.gguf"]
     }
   ]
 }

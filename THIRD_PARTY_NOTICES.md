@@ -9,7 +9,8 @@
 | [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | 本地语音识别 | MIT |
 | [Whisper Small、Medium、Large v3 Turbo models](https://huggingface.co/ggerganov/whisper.cpp) | 可选的多语言语音识别权重 | MIT |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | 本地总结推理 | MIT |
-| [Qwen3-8B-GGUF](https://huggingface.co/Qwen/Qwen3-8B-GGUF) | 中文总结模型 | Apache-2.0 |
+| [Qwen3-8B-GGUF](https://huggingface.co/Qwen/Qwen3-8B-GGUF) | 中文总结模型（高质量档） | Apache-2.0 |
+| [Qwen2.5-1.5B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF) | 中文总结模型（轻量档） | Apache-2.0 |
 | [Electron](https://www.electronjs.org/) | Windows 桌面运行时 | MIT |
 | [OpenCC](https://github.com/BYVoid/OpenCC) 繁简转换词表 | 将转写结果规范为简体中文（内嵌于 `src/main/services/chinese-conversion.cjs`） | Apache-2.0 |
 
