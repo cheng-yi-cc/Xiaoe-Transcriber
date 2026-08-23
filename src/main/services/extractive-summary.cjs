@@ -69,16 +69,13 @@ function excerptUnits(transcript) {
 
 function termStatistics(text) {
   const counts = new Map();
-  const display = new Map();
   for (const segment of segmenter.segment(String(text || ''))) {
     if (!segment.isWordLike) continue;
-    const original = segment.segment.trim();
-    const normalized = original.toLowerCase();
-    if (!termsFromText(original).length) continue;
+    const normalized = segment.segment.trim().toLowerCase();
+    if (!termsFromText(segment.segment).length) continue;
     counts.set(normalized, (counts.get(normalized) || 0) + 1);
-    if (!display.has(normalized)) display.set(normalized, original);
   }
-  return { counts, display };
+  return { counts };
 }
 
 function overlapRatio(leftTerms, rightTerms) {
@@ -133,11 +130,7 @@ function selectHighlights(transcript, limit = 9) {
   }
 
   return {
-    highlights: selected.slice(0, limit),
-    topTerms: rankedTerms.slice(0, 8).map(([term, count]) => ({
-      term: term === 'ai' ? 'AI' : (display.get(term) || term),
-      count
-    }))
+    highlights: selected.slice(0, limit)
   };
 }
 
@@ -147,69 +140,58 @@ function cleanExcerpt(text, maxLength = 160) {
 }
 
 function buildExtractiveSummary(transcript) {
-  const { highlights, topTerms } = selectHighlights(transcript);
-  const core = highlights.slice(0, 4);
-  const details = highlights.slice(4, 9);
-  const topicText = topTerms.length
-    ? topTerms.slice(0, 6).map(({ term }) => `“${term}”`).join('、')
-    : '若干课程主题';
-  const coreLines = core.length
-    ? core.map((item) => `- ${cleanExcerpt(item.text)}`).join('\n')
-    : '- 未能从文字稿中稳定提取代表性片段。';
-  const detailLines = details.length
-    ? details.map((item) => `- ${cleanExcerpt(item.text)}`).join('\n')
-    : '- 未提取到更多细节。';
-  const termLines = topTerms.length
-    ? topTerms.slice(0, 6).map(({ term, count }) => `- **${term}**：在文字稿中出现约 ${count} 次，可直接搜索查看上下文。`).join('\n')
-    : '- 可直接在完整文字稿中按关键词搜索。';
+  const { highlights } = selectHighlights(transcript);
+  const excerptLines = highlights.length
+    ? highlights.map((item) => `- ${cleanExcerpt(item.text)}`).join('\n')
+    : '- 这份逐字稿过短或结构异常，未能提取代表性片段。';
+  return `本地总结模型这次输出的内容没有通过可靠性检查，因此不展示可能失真的概括。以下条目直接摘自逐字稿原文，可快速了解内容脉络；更多信息请阅读同目录下的完整文字稿。\n\n${excerptLines}`;
+}
 
-  return `## 内容概览
+function evaluateGeneratedSummary(summary, transcript) {
+  const summaryText = String(summary || '').trim();
+  const normalizedTranscript = String(transcript || '').toLowerCase().replace(/\s+/g, '');
+  if (!normalizedTranscript) return { supported: false, reason: '逐字稿为空，无法校验。' };
 
-文字稿的高频主题集中在 ${topicText}。以下要点直接摘自逐字稿，以避免本地模型补充原文没有的信息。
+  const hanCount = (summaryText.match(/[\p{Script=Han}]/gu) || []).length;
+  if (hanCount < 120) {
+    return { supported: false, reason: `总结只有约 ${hanCount} 个汉字，低于 120 字的最低长度要求。` };
+  }
 
-## 核心观点
+  const terms = [...new Set(termsFromText(summaryText, SUMMARY_WORDS))];
+  if (!terms.length) return { supported: false, reason: '总结中没有可校验的实词。' };
+  const missedTerms = terms
+    .filter((term) => !normalizedTranscript.includes(term.replace(/\s+/g, '')));
+  const termRatio = 1 - (missedTerms.length / terms.length);
+  if (termRatio < 0.6) {
+    const samples = missedTerms.slice(0, 8).join('、');
+    return {
+      supported: false,
+      reason: `总结中的实词只有 ${Math.round(termRatio * 100)}% 能在逐字稿原文中找到（要求 60%），未命中的词如：${samples}。`
+    };
+  }
 
-${coreLines}
+  const numbers = [...new Set(summaryText.match(/\d{2,}(?:\.\d+)?/gu) || [])];
+  if (numbers.length) {
+    const missedNumbers = numbers.filter((value) => !normalizedTranscript.includes(value));
+    const numberRatio = 1 - (missedNumbers.length / numbers.length);
+    if (numberRatio < 0.7) {
+      return {
+        supported: false,
+        reason: `总结中的数字只有 ${Math.round(numberRatio * 100)}% 出现在逐字稿原文中（要求 70%），未命中的数字：${missedNumbers.slice(0, 8).join('、')}。`
+      };
+    }
+  }
 
-## 重要细节
-
-${detailLines}
-
-## 值得进一步看的部分
-
-${termLines}`;
+  return { supported: true, reason: '' };
 }
 
 function generatedSummaryIsSupported(summary, transcript) {
-  const requiredHeadings = ['## 内容概览', '## 核心观点', '## 重要细节', '## 值得进一步看的部分'];
-  if (!requiredHeadings.every((heading) => String(summary || '').includes(heading))) return false;
-  const normalizedTranscript = String(transcript || '').toLowerCase().replace(/\s+/g, '');
-  const contentLines = String(summary || '').split(/\r?\n/)
-    .map((line) => line.replace(/^[-*>#\s]+/, '').replace(/\*+/g, '').trim())
-    .filter((line) => line.length >= 8 && !/^未(?:涉及|提取|能)/.test(line));
-  if (contentLines.length < 4) return false;
-
-  for (const line of contentLines) {
-    const terms = [...new Set(termsFromText(line, SUMMARY_WORDS))];
-    if (terms.length < 2) continue;
-    let bestSupported = 0;
-    for (const anchor of terms) {
-      const normalizedAnchor = anchor.replace(/\s+/g, '');
-      let position = normalizedTranscript.indexOf(normalizedAnchor);
-      while (position >= 0) {
-        const window = normalizedTranscript.slice(Math.max(0, position - 360), position + 720);
-        const supported = terms.filter((term) => window.includes(term.replace(/\s+/g, ''))).length;
-        bestSupported = Math.max(bestSupported, supported);
-        position = normalizedTranscript.indexOf(normalizedAnchor, position + normalizedAnchor.length);
-      }
-    }
-    if (bestSupported / terms.length < 0.55) return false;
-  }
-  return true;
+  return evaluateGeneratedSummary(summary, transcript).supported;
 }
 
 module.exports = {
   buildExtractiveSummary,
+  evaluateGeneratedSummary,
   excerptUnits,
   generatedSummaryIsSupported,
   selectHighlights,

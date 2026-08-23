@@ -2,7 +2,7 @@ const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { captureAuthorizedReplay } = require('./services/auth-capture.cjs');
-const { writeSummaryFile, writeTranscriptFile } = require('./services/export-service.cjs');
+const { writeRawModelOutput, writeSummaryFile, writeTranscriptFile } = require('./services/export-service.cjs');
 const { makeResultFolderPath, sanitizeWindowsName } = require('./services/file-utils.cjs');
 const { downloadHls } = require('./services/hls-downloader.cjs');
 const { summarizeTranscript } = require('./services/summarization-service.cjs');
@@ -94,6 +94,7 @@ class JobController {
       if (!modelOption) throw new Error('尚未选择转写模型。');
       const whisperPath = await dependencies.resolveRequiredFile('whisper-engine', 'whisper-cli.exe');
       const whisperModelPath = await dependencies.resolveRequiredFile(modelOption.componentId, modelOption.fileName);
+      const vadModelPath = await dependencies.resolveRequiredFile('vad-model', 'ggml-silero-v5.1.2.bin');
       this.send({ stage: 'transcribe', percent: 43, message: `${modelOption.label} 正在使用 NVIDIA GPU 转写…` });
       const transcript = await transcribeAudio({
         whisperPath,
@@ -101,6 +102,7 @@ class JobController {
         audioPath,
         workDirectory: temporaryDirectory,
         signal,
+        vadModelPath,
         onProgress: ({ percent }) => this.send({
           stage: 'transcribe',
           percent: 43 + Math.round((percent / 100) * 32),
@@ -120,7 +122,7 @@ class JobController {
       const summaryOption = dependencies.manifest.summaryOption;
       if (!summaryOption) throw new Error('尚未选择总结模型。');
       const summaryModelPath = await dependencies.resolveRequiredFile(summaryOption.componentId, summaryOption.fileName);
-      const summary = await summarizeTranscript({
+      const { text: summary, modelOutput, gatePassed, gateReason } = await summarizeTranscript({
         llamaServerPath,
         modelPath: summaryModelPath,
         transcript,
@@ -131,6 +133,21 @@ class JobController {
           message: completed ? `正在总结第 ${completed}/${total} 部分…` : '正在生成内容总结…'
         })
       });
+      if (!gatePassed) {
+        const rawOutputPath = await writeRawModelOutput({
+          resultDirectory,
+          title,
+          sourceUrl,
+          output: modelOutput,
+          reason: gateReason
+        });
+        this.send({
+          stage: 'summarize',
+          percent: 99,
+          message: '总结未通过可靠性检查，已改用原文摘录；模型原始输出已保存供排查。',
+          rawOutputPath
+        });
+      }
       const summaryPath = await writeSummaryFile({ resultDirectory, title, sourceUrl, summary });
 
       const result = { resultDirectory, transcriptPath, summaryPath, title };

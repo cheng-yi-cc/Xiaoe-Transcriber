@@ -8,6 +8,7 @@
 | [FFmpeg](https://ffmpeg.org/) / [BtbN Windows build](https://github.com/BtbN/FFmpeg-Builds) | 音频提取 | 所选构建启用了 GPLv3 组件，按 GPLv3 分发 |
 | [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | 本地语音识别 | MIT |
 | [Whisper Small、Medium、Large v3 Turbo models](https://huggingface.co/ggerganov/whisper.cpp) | 可选的多语言语音识别权重 | MIT |
+| [Silero VAD（ggml-org/whisper-vad）](https://huggingface.co/ggml-org/whisper-vad) | 语音活动检测，转写前过滤静音与音乐段 | MIT |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | 本地总结推理 | MIT |
 | [Qwen3-8B-GGUF](https://huggingface.co/Qwen/Qwen3-8B-GGUF) | 中文总结模型（高质量档） | Apache-2.0 |
 | [Qwen2.5-1.5B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF) | 中文总结模型（轻量档） | Apache-2.0 |

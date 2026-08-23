@@ -2,7 +2,7 @@ const net = require('node:net');
 const path = require('node:path');
 const { spawnManaged } = require('./process-runner.cjs');
 const { chunkTranscript } = require('./transcript-utils.cjs');
-const { buildExtractiveSummary, generatedSummaryIsSupported } = require('./extractive-summary.cjs');
+const { buildExtractiveSummary, evaluateGeneratedSummary } = require('./extractive-summary.cjs');
 
 async function reservePort() {
   return new Promise((resolve, reject) => {
@@ -54,7 +54,6 @@ async function chat(baseUrl, messages, signal, maxTokens = 700) {
       .replace(/^<\/think>\s*/i, '')
       .replace(/^```(?:markdown)?\s*/i, '')
       .replace(/\s*```$/, '')
-      .replace(/^#{3,}\s+/gm, '## ')
       .trim();
 }
 
@@ -83,11 +82,11 @@ async function summarizeTranscript({ llamaServerPath, modelPath, transcript, sig
       const content = await chat(baseUrl, [
         {
           role: 'system',
-          content: '你是专业的中文课程笔记助手，一律使用简体中文。阅读逐字稿片段后，用自己通顺的书面语归纳要点：合并重复内容，删除口头语和过渡句，把零散表述整理成清晰的条目。所有信息必须来自原文，禁止添加原文没有的事实、数字、人名或结论。/no_think'
+          content: '你是专业的中文内容编辑，一律使用简体中文。阅读逐字稿片段后，用连贯的书面语概述这一部分讲了什么：合并重复表述，省略口头语、寒暄和过渡句。所有信息必须来自原文，禁止添加原文没有的事实、数字、人名或结论。/no_think'
         },
         {
           role: 'user',
-          content: `下面是逐字稿的第 ${index + 1}/${chunks.length} 部分。请归纳这一部分的关键内容，保留观点、方法、步骤、案例、数字和限定条件。用自己的话写成通顺的要点，不要照抄原句，不要写开场白，不规定条数。\n\n${chunks[index]}`
+          content: `下面是逐字稿的第 ${index + 1}/${chunks.length} 部分。请用一到两个自然段连贯地概括这部分讲了什么，覆盖主要话题和关键结论，保留重要的观点、方法、步骤、数字和限定条件。用自己的话叙述，不要分点罗列，不要照抄原句，不要写开场白。\n\n${chunks[index]}`
         }
       ], signal, 650);
       partials.push(`### 第 ${index + 1} 部分\n${content}`);
@@ -111,17 +110,21 @@ async function summarizeTranscript({ llamaServerPath, modelPath, transcript, sig
     const summary = await chat(baseUrl, [
       {
         role: 'system',
-        content: '你是专业的中文课程编辑，一律使用简体中文。根据输入材料撰写读者友好的总结：用完整通顺的句子归纳和概括，可以重组信息、合并同类项，而不是罗列原文片段。所有事实必须来自材料，禁止编造数据、人名、案例或材料中没有的延伸结论。/no_think'
+        content: '你是专业的中文编辑，一律使用简体中文。根据输入材料撰写一篇概括性的内容总结：用完整通顺的段落讲清楚这次直播整体讲了什么、围绕哪些主题展开、得出了什么结论或建议。用概括和重组的方式写作，而不是罗列或摘抄原文片段。所有事实必须来自材料，禁止编造数据、人名、案例或材料中没有的延伸结论。/no_think'
       },
       {
         role: 'user',
-        content: `请把下面材料整理为最终总结，严格使用二级标题：\n\n## 内容概览\n用两三句话概括材料讲了什么。\n\n## 核心观点\n分条列出材料表达的主要观点，每条用一句通顺的话概括。\n\n## 重要细节\n整理材料中实际出现的方法、步骤、案例、数据和限定条件。\n\n## 值得进一步看的部分\n列出值得回到完整文字稿细读的主题；没有就写“未涉及”。\n\n直接陈述内容，不要出现“根据材料”“本视频”等字眼，不要编造材料没有的信息。\n\n${synthesisMaterial}`
+        content: `请把下面材料概括为一篇总结，直接输出正文：\n- 写成三到五个自然段的连贯短文；不要使用任何标题、列表、编号或加粗，不要分点罗列。\n- 第一段总起：这次直播的主题和面向的听众。\n- 中间各段按材料脉络概括主要讲了什么。\n- 最后一段收束核心结论或建议（材料里没有就不写）。\n- 不要出现“根据材料”“文中提到”这类字眼，不要罗列关键词或词频，不要编造材料没有的信息。\n\n${synthesisMaterial}`
       }
     ], signal, 1400);
     onProgress({ phase: 'complete', percent: 100 });
-    return generatedSummaryIsSupported(summary, transcript)
-      ? summary
-      : buildExtractiveSummary(transcript);
+    const evaluation = evaluateGeneratedSummary(summary, transcript);
+    return {
+      text: evaluation.supported ? summary : buildExtractiveSummary(transcript),
+      modelOutput: summary,
+      gatePassed: evaluation.supported,
+      gateReason: evaluation.reason
+    };
   } catch (error) {
     if (!signal?.aborted && serverTail) error.message = `${error.message}\n${serverTail.slice(-2500)}`;
     throw error;

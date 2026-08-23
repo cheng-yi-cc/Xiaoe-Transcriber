@@ -23,4 +23,11 @@ async function writeSummaryFile({ resultDirectory, title, sourceUrl, summary }) 
   return filePath;
 }
 
-module.exports = { metadataBlock, writeSummaryFile, writeTranscriptFile };
+async function writeRawModelOutput({ resultDirectory, sourceUrl, output, reason }) {
+  const filePath = path.join(resultDirectory, '总结-模型原始输出（未通过校验）.md');
+  const body = `# 模型原始输出（未通过可靠性校验，仅供参考）\n\n> 拒绝原因：${reason || '未通过可靠性校验。'}\n>\n> 下面是本地总结模型的原始输出，未经修改。正式交付的 总结.md 已改用逐字稿原文摘录。\n\n${String(output || '').trim()}\n`;
+  await fsp.writeFile(filePath, body, 'utf8');
+  return filePath;
+}
+
+module.exports = { metadataBlock, writeRawModelOutput, writeSummaryFile, writeTranscriptFile };

@@ -2,7 +2,7 @@ const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { runProcess } = require('./process-runner.cjs');
-const { paragraphizeTranscript } = require('./transcript-utils.cjs');
+const { paragraphizeTranscript, removeFillerWords } = require('./transcript-utils.cjs');
 const { toSimplifiedChinese } = require('./chinese-conversion.cjs');
 
 async function extractAudio({ ffmpegPath, mediaPath, audioPath, signal, onProgress = () => {} }) {
@@ -27,21 +27,25 @@ async function extractAudio({ ffmpegPath, mediaPath, audioPath, signal, onProgre
   return { audioPath, processedSeconds: lastTimeSeconds };
 }
 
-async function transcribeAudio({ whisperPath, modelPath, audioPath, workDirectory, signal, onProgress = () => {} }) {
+async function transcribeAudio({ whisperPath, modelPath, audioPath, workDirectory, signal, vadModelPath = null, onProgress = () => {} }) {
   const outputBase = path.join(workDirectory, 'whisper-output');
   const threadCount = Math.max(4, Math.min(12, (os.cpus()?.length || 8) - 2));
   let lastProgress = 0;
-  await runProcess(whisperPath, [
+  const args = [
     '-m', modelPath,
     '-f', audioPath,
-    '-l', 'auto',
+    '-l', 'zh',
     '--prompt', '以下是普通话的句子。',
+    '--carry-initial-prompt',
+    '--beam-size', '5',
     '-t', String(threadCount),
     '-fa',
     '-pp',
     '-otxt',
     '-of', outputBase
-  ], {
+  ];
+  if (vadModelPath) args.push('--vad', '-vm', vadModelPath);
+  await runProcess(whisperPath, args, {
     signal,
     cwd: path.dirname(whisperPath),
     onLine(line) {
@@ -53,7 +57,7 @@ async function transcribeAudio({ whisperPath, modelPath, audioPath, workDirector
     }
   });
   const raw = await fsp.readFile(`${outputBase}.txt`, 'utf8');
-  const transcript = toSimplifiedChinese(paragraphizeTranscript(raw));
+  const transcript = toSimplifiedChinese(paragraphizeTranscript(removeFillerWords(raw)));
   if (!transcript.trim()) throw new Error('转写引擎没有生成有效文字。');
   onProgress({ percent: 100 });
   return transcript;
