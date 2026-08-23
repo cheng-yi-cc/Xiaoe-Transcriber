@@ -1,6 +1,6 @@
 {
   "name": "xiaoe-transcriber",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "A local Windows app that turns authorized Xiaoe-tech replays into transcripts and summaries.",
   "main": "src/main/main.cjs",
   "author": "cheng-yi-cc",
