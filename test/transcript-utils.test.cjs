@@ -1,8 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
+  buildTimedParagraphs,
   chunkTranscript,
+  formatTimedTranscript,
   paragraphizeTranscript,
+  parseSrtSegments,
   removeFillerWords
 } = require('../src/main/services/transcript-utils.cjs');
 
@@ -62,4 +65,36 @@ test('splits long transcripts into bounded summarization chunks', () => {
   const chunks = chunkTranscript(text, 3500);
   assert.equal(chunks.length, 2);
   assert.ok(chunks.every((chunk) => chunk.length <= 3500));
+});
+
+test('parses SRT segments and formats paragraph time ranges', () => {
+  const srt = [
+    '1',
+    '00:01:02,300 --> 00:01:05,000',
+    '第一句话。',
+    '',
+    '2',
+    '00:01:05,200 --> 00:01:09,900',
+    '第二句话。'
+  ].join('\n');
+  const segments = parseSrtSegments(srt);
+  assert.deepEqual(segments, [
+    { startMs: 62300, endMs: 65000, text: '第一句话。' },
+    { startMs: 65200, endMs: 69900, text: '第二句话。' }
+  ]);
+  const paragraphs = buildTimedParagraphs(segments, 100);
+  assert.equal(paragraphs.length, 1);
+  assert.equal(formatTimedTranscript(paragraphs), '[00:01:02–00:01:09]\n第一句话。第二句话。');
+});
+
+test('starts a new timed paragraph before exceeding the target length', () => {
+  const segments = [
+    { startMs: 0, endMs: 1000, text: '甲'.repeat(70) },
+    { startMs: 1000, endMs: 2000, text: '乙'.repeat(70) }
+  ];
+  const paragraphs = buildTimedParagraphs(segments, 100);
+  assert.deepEqual(paragraphs.map((item) => [item.startMs, item.endMs, item.text.length]), [
+    [0, 1000, 70],
+    [1000, 2000, 70]
+  ]);
 });
