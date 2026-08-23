@@ -128,7 +128,7 @@
         <section class="settings-section">
           <div class="section-title">
             <h2>转写模型</h2>
-            <p>根据显存、内存和稳定性自动推荐 · 点击未安装的模型开始下载</p>
+            <p>根据显存、内存和稳定性自动推荐 · 点击未安装的模型开始下载 · 支持暂停、断点续传与多个同时下载</p>
           </div>
           <div class="model-list" role="radiogroup" aria-label="选择转写模型">
             <div class="model-row" data-model="small">
@@ -139,6 +139,17 @@
               <span><b>466 MB</b><small>2 GB+ 显存</small></span>
               <i data-model-status>适合低配置电脑</i>
               <button type="button" class="model-remove hidden" data-model-remove>删除</button>
+              <div class="model-progress hidden" data-model-progress>
+                <div class="progress-track"><i data-model-progress-bar></i></div>
+                <div class="model-progress-footer">
+                  <small data-model-progress-detail></small>
+                  <span class="model-actions">
+                    <button type="button" class="model-action hidden" data-model-action data-model-pause>暂停</button>
+                    <button type="button" class="model-action hidden" data-model-action data-model-resume>继续下载</button>
+                    <button type="button" class="model-action danger hidden" data-model-action data-model-cancel>取消</button>
+                  </span>
+                </div>
+              </div>
             </div>
             <div class="model-row" data-model="medium">
               <label class="model-choice" for="modelMedium">
@@ -148,6 +159,17 @@
               <span><b>1.5 GB</b><small>4 GB+ 显存</small></span>
               <i data-model-status>兼顾速度与精度</i>
               <button type="button" class="model-remove hidden" data-model-remove>删除</button>
+              <div class="model-progress hidden" data-model-progress>
+                <div class="progress-track"><i data-model-progress-bar></i></div>
+                <div class="model-progress-footer">
+                  <small data-model-progress-detail></small>
+                  <span class="model-actions">
+                    <button type="button" class="model-action hidden" data-model-action data-model-pause>暂停</button>
+                    <button type="button" class="model-action hidden" data-model-action data-model-resume>继续下载</button>
+                    <button type="button" class="model-action danger hidden" data-model-action data-model-cancel>取消</button>
+                  </span>
+                </div>
+              </div>
             </div>
             <div class="model-row" data-model="large-v3-turbo">
               <label class="model-choice" for="modelLargeTurbo">
@@ -157,6 +179,17 @@
               <span><b>1.6 GB</b><small>6 GB+ 显存</small></span>
               <i data-model-status>适合高性能显卡</i>
               <button type="button" class="model-remove hidden" data-model-remove>删除</button>
+              <div class="model-progress hidden" data-model-progress>
+                <div class="progress-track"><i data-model-progress-bar></i></div>
+                <div class="model-progress-footer">
+                  <small data-model-progress-detail></small>
+                  <span class="model-actions">
+                    <button type="button" class="model-action hidden" data-model-action data-model-pause>暂停</button>
+                    <button type="button" class="model-action hidden" data-model-action data-model-resume>继续下载</button>
+                    <button type="button" class="model-action danger hidden" data-model-action data-model-cancel>取消</button>
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -175,6 +208,17 @@
               <span><b>4.7 GB</b><small>6 GB+ 显存</small></span>
               <i data-model-status>推荐 8GB 显存</i>
               <button type="button" class="model-remove hidden" data-model-remove>删除</button>
+              <div class="model-progress hidden" data-model-progress>
+                <div class="progress-track"><i data-model-progress-bar></i></div>
+                <div class="model-progress-footer">
+                  <small data-model-progress-detail></small>
+                  <span class="model-actions">
+                    <button type="button" class="model-action hidden" data-model-action data-model-pause>暂停</button>
+                    <button type="button" class="model-action hidden" data-model-action data-model-resume>继续下载</button>
+                    <button type="button" class="model-action danger hidden" data-model-action data-model-cancel>取消</button>
+                  </span>
+                </div>
+              </div>
             </div>
             <div class="model-row" data-summary-model="qwen2.5-1.5b">
               <label class="model-choice" for="summaryModelQwen25">
@@ -184,6 +228,17 @@
               <span><b>1.0 GB</b><small>2 GB+ 显存</small></span>
               <i data-model-status>适合低配置电脑</i>
               <button type="button" class="model-remove hidden" data-model-remove>删除</button>
+              <div class="model-progress hidden" data-model-progress>
+                <div class="progress-track"><i data-model-progress-bar></i></div>
+                <div class="model-progress-footer">
+                  <small data-model-progress-detail></small>
+                  <span class="model-actions">
+                    <button type="button" class="model-action hidden" data-model-action data-model-pause>暂停</button>
+                    <button type="button" class="model-action hidden" data-model-action data-model-resume>继续下载</button>
+                    <button type="button" class="model-action danger hidden" data-model-action data-model-cancel>取消</button>
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -208,19 +263,6 @@
         <section class="prerequisite hidden" id="prerequisitePanel" aria-live="polite">
           <p id="prerequisiteMessage"></p>
           <button type="button" id="runtimeButton" class="line-button hidden">安装 VC++ 运行库</button>
-        </section>
-
-        <section class="download-dock" aria-live="polite">
-          <div class="download-summary">
-            <small id="downloadSummaryLabel">本地模型</small>
-            <strong id="downloadSize">正在计算…</strong>
-            <span id="downloadSummaryDetail">转写与总结模型可分别切换，共用引擎只下载一次。</span>
-          </div>
-          <div class="download-progress hidden" id="downloadProgress">
-            <div><span id="downloadLabel">准备下载</span><b id="downloadPercent">0%</b></div>
-            <div class="progress-track"><i id="downloadBar"></i></div>
-            <small id="downloadDetail">准备连接官方源…</small>
-          </div>
         </section>
       </section>
     </main>

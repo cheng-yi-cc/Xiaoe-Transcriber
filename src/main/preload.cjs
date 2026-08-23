@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('xiaoeApp', {
   selectModel: (modelId) => ipcRenderer.invoke('settings:select-model', modelId),
   selectSummaryModel: (modelId) => ipcRenderer.invoke('settings:select-summary-model', modelId),
   installDependencies: (modelId, kind) => ipcRenderer.invoke('dependencies:install', { modelId, kind }),
+  pauseDependencies: (modelId, kind) => ipcRenderer.invoke('dependencies:pause-install', { modelId, kind }),
+  cancelDependencies: (modelId, kind) => ipcRenderer.invoke('dependencies:cancel-install', { modelId, kind }),
   removeModel: (modelId, kind) => ipcRenderer.invoke('dependencies:remove-model', { modelId, kind }),
   getDependencyStatus: () => ipcRenderer.invoke('dependencies:status'),
   startJob: (sourceUrl) => ipcRenderer.invoke('job:start', { sourceUrl }),

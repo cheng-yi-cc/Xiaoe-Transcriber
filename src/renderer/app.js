@@ -44,14 +44,6 @@ const elements = {
   prerequisitePanel: document.querySelector('#prerequisitePanel'),
   prerequisiteMessage: document.querySelector('#prerequisiteMessage'),
   runtimeButton: document.querySelector('#runtimeButton'),
-  downloadSummaryLabel: document.querySelector('#downloadSummaryLabel'),
-  downloadSize: document.querySelector('#downloadSize'),
-  downloadSummaryDetail: document.querySelector('#downloadSummaryDetail'),
-  downloadProgress: document.querySelector('#downloadProgress'),
-  downloadLabel: document.querySelector('#downloadLabel'),
-  downloadPercent: document.querySelector('#downloadPercent'),
-  downloadBar: document.querySelector('#downloadBar'),
-  downloadDetail: document.querySelector('#downloadDetail'),
   toast: document.querySelector('#toast')
 };
 
@@ -59,15 +51,13 @@ const state = {
   app: null,
   authStatus: 'unknown',
   busy: false,
-  installing: false,
-  installTargetModelId: null,
-  installKind: null,
-  modelOperation: null,
+  installs: new Map(),
   resultDirectory: null,
   currentPage: 'workspace'
 };
 
 const stageOrder = ['capture', 'download', 'transcribe', 'summarize'];
+const settledInstallPhases = ['error', 'paused', 'cancelled'];
 let toastTimer = null;
 let lastModelAction = { key: '', at: 0 };
 
@@ -194,6 +184,22 @@ function selectedIdForKind(kind) {
     : state.app?.dependencies?.selectedModelId;
 }
 
+function installKeyOf(kind, modelId) {
+  return `${kind}:${modelId}`;
+}
+
+function activeInstall(kind, modelId) {
+  const install = state.installs.get(installKeyOf(kind, modelId));
+  return install && !settledInstallPhases.includes(install.phase) ? install : null;
+}
+
+function isInstallingAny() {
+  for (const install of state.installs.values()) {
+    if (!settledInstallPhases.includes(install.phase)) return true;
+  }
+  return false;
+}
+
 function renderPrerequisites() {
   const { gpu, vcRuntime, dependencies } = state.app;
   let message = '';
@@ -215,19 +221,29 @@ function renderModelRow(row, kind) {
   const input = row.querySelector('input');
   const status = row.querySelector('[data-model-status]');
   const removeButton = row.querySelector('[data-model-remove]');
+  const pauseButton = row.querySelector('[data-model-pause]');
+  const resumeButton = row.querySelector('[data-model-resume]');
+  const cancelButton = row.querySelector('[data-model-cancel]');
+  const install = state.installs.get(installKeyOf(kind, modelId)) || null;
+  const working = Boolean(install) && !settledInstallPhases.includes(install.phase);
+  const paused = install?.phase === 'paused';
+  const failed = Boolean(install) && install.phase === 'error';
   const selected = model?.id === selectedIdForKind(kind) && model?.ready;
   const recommended = model?.id === (kind === 'summary' ? system.recommendedSummaryModelId : system.recommendedModelId);
   const incompatible = gpu.supported && gpu.memoryMb < (model?.minimumVramMb || 0);
-  const operationTarget = state.installing
-    && state.installKind === kind
-    && state.installTargetModelId === model?.id;
   input.checked = selected;
-  input.disabled = state.installing || state.busy;
+  input.disabled = state.busy || working;
   row.classList.toggle('selected', selected);
   row.classList.toggle('incompatible', incompatible);
+  row.classList.toggle('installing', working);
+  row.classList.toggle('has-error', failed);
 
-  if (operationTarget) {
-    status.textContent = state.modelOperation === 'remove' ? '删除中…' : '下载中…';
+  if (working) {
+    status.textContent = install.status || '下载中…';
+  } else if (failed) {
+    status.textContent = '下载失败';
+  } else if (paused) {
+    status.textContent = install.status || '已暂停';
   } else {
     const labels = [];
     if (selected) labels.push('使用中');
@@ -237,8 +253,18 @@ function renderModelRow(row, kind) {
     status.textContent = labels.join(' · ') || model?.suitability || '';
   }
 
+  const progressBox = row.querySelector('[data-model-progress]');
+  progressBox.classList.toggle('hidden', !install);
+  if (install) {
+    row.querySelector('[data-model-progress-bar]').style.width = `${install.percent || 0}%`;
+    row.querySelector('[data-model-progress-detail]').textContent = install.detail || '';
+  }
+
+  pauseButton.classList.toggle('hidden', !working);
+  resumeButton.classList.toggle('hidden', !paused);
+  cancelButton.classList.toggle('hidden', !working && !paused);
   removeButton.classList.toggle('hidden', !model?.modelInstalled || selected);
-  removeButton.disabled = state.installing || state.busy;
+  removeButton.disabled = state.busy || isInstallingAny();
 }
 
 function renderModels() {
@@ -248,25 +274,11 @@ function renderModels() {
 
 function renderDownloadState() {
   const { dependencies } = state.app;
-  const allModels = [...dependencies.models, ...dependencies.summaryModels];
-  const installedCount = allModels.filter((model) => model.modelInstalled).length;
   const selected = modelById(dependencies.selectedModelId);
   const selectedSummary = summaryModelById(dependencies.selectedSummaryModelId);
-  if (state.installing) {
-    const target = modelOfKind(state.installKind, state.installTargetModelId);
-    elements.downloadSummaryLabel.textContent = state.modelOperation === 'remove' ? '正在删除' : '正在下载';
-    elements.downloadSize.textContent = target?.label || '模型处理中';
-    elements.downloadSummaryDetail.textContent = state.modelOperation === 'remove'
-      ? '只删除这个模型，共用引擎与其他模型会保留。'
-      : '下载完成后会校验 SHA-256，并运行本地引擎自检。';
-  } else {
-    elements.downloadSummaryLabel.textContent = '本地模型';
-    elements.downloadSize.textContent = `${installedCount} / ${allModels.length} 已安装`;
-    elements.downloadSummaryDetail.textContent = dependencies.ready
-      ? `转写：${selected?.label || '—'} · 总结：${selectedSummary?.label || '—'}`
-      : '点击未安装的模型开始下载；共用引擎只下载一次。';
-  }
   elements.startButton.disabled = state.busy || !dependencies.ready;
+  elements.chooseModelButton.disabled = state.busy || isInstallingAny();
+  elements.chooseOutputButton.disabled = state.busy || isInstallingAny();
   elements.taskNote.textContent = dependencies.ready
     ? `${selected?.label || '本地模型'} + ${selectedSummary?.label || ''} 已就绪 · 处理时保持静音`
     : '尚未安装所选模型 · 请前往设置下载';
@@ -348,8 +360,6 @@ function setBusy(busy) {
   elements.cancelButton.classList.toggle('hidden', !busy);
   elements.clearUrlButton.disabled = busy;
   elements.sourceUrl.disabled = busy;
-  elements.chooseModelButton.disabled = busy || state.installing;
-  elements.chooseOutputButton.disabled = busy || state.installing;
   for (const button of elements.navButtons) button.disabled = busy;
   renderModels();
   renderDownloadState();
@@ -450,18 +460,13 @@ async function chooseDirectory(type) {
   }
 }
 
-async function installDependencies(modelId, kind = 'transcribe') {
+async function installDependencies(modelId, kind = 'transcribe', { resume = false } = {}) {
+  const key = installKeyOf(kind, modelId);
+  if (activeInstall(kind, modelId)) return;
   const model = modelOfKind(kind, modelId);
-  state.installing = true;
-  state.installTargetModelId = modelId;
-  state.installKind = kind;
-  state.modelOperation = 'download';
-  elements.downloadProgress.classList.remove('hidden');
-  elements.downloadLabel.textContent = '准备下载';
-  elements.downloadPercent.textContent = '0%';
-  elements.downloadBar.style.width = '0%';
-  elements.chooseModelButton.disabled = true;
-  elements.chooseOutputButton.disabled = true;
+  state.installs.set(key, resume
+    ? { phase: 'prepare', percent: 0, status: '继续下载…', detail: '正在连接官方源，从已下载进度继续…' }
+    : { phase: 'prepare', percent: 0, status: '准备下载…', detail: '正在连接官方源…' });
   renderModels();
   renderDownloadState();
   try {
@@ -469,41 +474,71 @@ async function installDependencies(modelId, kind = 'transcribe') {
     state.app.dependencies = dependencies;
     state.app.settings.selectedModelId = dependencies.selectedModelId;
     state.app.settings.selectedSummaryModelId = dependencies.selectedSummaryModelId;
-    elements.downloadLabel.textContent = '模型与引擎已就绪';
-    elements.downloadPercent.textContent = '100%';
-    elements.downloadBar.style.width = '100%';
-    elements.downloadDetail.textContent = '完整性检查与本地引擎自检均已通过。';
-    showToast(`${model?.label || '模型'} 安装完成`);
+    const endPhase = state.installs.get(key)?.phase;
+    if (endPhase === 'complete') showToast(`${model?.label || '模型'} 安装完成`);
+    else if (endPhase === 'cancelled') showToast('已取消下载，临时文件已清理');
   } catch (error) {
-    elements.downloadDetail.textContent = error.message || String(error);
-    showToast('模型安装未完成');
+    showToast(error.message || String(error));
+    try {
+      state.app.dependencies = await window.xiaoeApp.getDependencyStatus();
+    } catch {
+      return;
+    }
   } finally {
-    state.installing = false;
-    state.installTargetModelId = null;
-    state.installKind = null;
-    state.modelOperation = null;
-    elements.chooseModelButton.disabled = false;
-    elements.chooseOutputButton.disabled = false;
+    const install = state.installs.get(key);
+    if (!install || (install.phase !== 'error' && install.phase !== 'paused')) state.installs.delete(key);
     renderModels();
     renderDownloadState();
+  }
+}
+
+async function pauseInstall(modelId, kind = 'transcribe') {
+  try {
+    await window.xiaoeApp.pauseDependencies(modelId, kind);
+  } catch (error) {
+    showToast(error.message || String(error));
+  }
+}
+
+function resumeInstall(modelId, kind = 'transcribe') {
+  return installDependencies(modelId, kind, { resume: true });
+}
+
+async function cancelInstall(modelId, kind = 'transcribe') {
+  const model = modelOfKind(kind, modelId);
+  const confirmed = window.confirm(`取消下载 ${model?.label || ''}？\n\n已下载的临时文件会被删除，之后需要重新下载。`);
+  if (!confirmed) return;
+  try {
+    const result = await window.xiaoeApp.cancelDependencies(modelId, kind);
+    if (result?.models) {
+      state.app.dependencies = result;
+      state.installs.delete(installKeyOf(kind, modelId));
+      renderModels();
+      renderDownloadState();
+    }
+  } catch (error) {
+    showToast(error.message || String(error));
   }
 }
 
 async function removeModel(modelId, kind = 'transcribe') {
   const model = modelOfKind(kind, modelId);
   if (!model?.modelInstalled) return;
+  if (activeInstall(kind, modelId)) {
+    showToast('这个模型正在下载，暂时不能删除。');
+    return;
+  }
+  if (isInstallingAny()) {
+    showToast('有模型正在下载，暂时不能删除。');
+    return;
+  }
   const confirmed = window.confirm(
     `删除 ${model.label}？\n\n将释放约 ${formatBytes(model.downloadBytes)}，共用引擎和其他模型会保留。`
   );
   if (!confirmed) return;
 
-  state.installing = true;
-  state.installTargetModelId = modelId;
-  state.installKind = kind;
-  state.modelOperation = 'remove';
-  elements.downloadProgress.classList.add('hidden');
-  elements.chooseModelButton.disabled = true;
-  elements.chooseOutputButton.disabled = true;
+  const key = installKeyOf(kind, modelId);
+  state.installs.set(key, { phase: 'remove', percent: 0, status: '删除中…', detail: '只删除这个模型，共用引擎会保留。' });
   renderModels();
   renderDownloadState();
   try {
@@ -513,28 +548,56 @@ async function removeModel(modelId, kind = 'transcribe') {
   } catch (error) {
     showToast(error.message || String(error));
   } finally {
-    state.installing = false;
-    state.installTargetModelId = null;
-    state.installKind = null;
-    state.modelOperation = null;
-    elements.chooseModelButton.disabled = false;
-    elements.chooseOutputButton.disabled = false;
+    state.installs.delete(key);
     renderModels();
     renderDownloadState();
   }
 }
 
+function installStatusText(phase, percent) {
+  if (phase === 'prepare') return '准备下载…';
+  if (phase === 'extract') return '正在解压…';
+  if (phase === 'skip') return '跳过已就绪组件';
+  if (phase === 'verifying') return '正在自检引擎…';
+  if (phase === 'complete') return '即将完成…';
+  if (phase === 'paused') return `已暂停 ${percent}%`;
+  return `下载中 ${percent}%`;
+}
+
+function installDetailText(event) {
+  if (event.phase === 'error') return event.message || '下载失败';
+  if (event.phase === 'verifying') return '校验文件完整性并运行引擎自检';
+  if (event.phase === 'skip') return `${event.componentLabel || ''} 已就绪`;
+  if (event.phase === 'extract') return `正在解压：${event.componentLabel || ''}`;
+  if (event.phase === 'download') {
+    return `${event.componentLabel || ''} · ${formatBytes(event.completedBytes)} / ${formatBytes(event.totalBytes)}`;
+  }
+  return '';
+}
+
 function handleDependencyProgress(event) {
-  const percent = event.totalBytes
-    ? Math.min(100, Math.round((event.completedBytes / event.totalBytes) * 100))
-    : 0;
-  elements.downloadProgress.classList.remove('hidden');
-  elements.downloadPercent.textContent = `${percent}%`;
-  elements.downloadBar.style.width = `${percent}%`;
-  if (event.phase === 'skip') elements.downloadLabel.textContent = `已存在：${event.component.label}`;
-  else if (event.phase === 'extract') elements.downloadLabel.textContent = `正在解压：${event.component.label}`;
-  else if (event.component) elements.downloadLabel.textContent = `正在下载：${event.component.label}`;
-  elements.downloadDetail.textContent = `${formatBytes(event.completedBytes)} / ${formatBytes(event.totalBytes)}`;
+  const key = installKeyOf(event.kind, event.modelId);
+  const install = state.installs.get(key);
+  if (!install) return;
+  if (event.phase === 'error') {
+    install.phase = 'error';
+    install.detail = installDetailText(event);
+  } else if (event.phase === 'paused') {
+    install.phase = 'paused';
+    install.status = installStatusText('paused', install.percent || 0);
+  } else if (event.phase === 'cancelled') {
+    state.installs.delete(key);
+  } else {
+    install.phase = event.phase;
+    if (event.totalBytes) {
+      install.percent = Math.min(100, Math.round((event.completedBytes / event.totalBytes) * 100));
+    }
+    if (event.phase === 'complete') install.percent = 100;
+    install.status = installStatusText(event.phase, install.percent || 0);
+    install.detail = installDetailText(event);
+  }
+  renderModels();
+  renderDownloadState();
 }
 
 async function installVcRuntime() {
@@ -704,9 +767,14 @@ elements.authSourceUrl.addEventListener('input', () => {
 for (const button of elements.navButtons) button.addEventListener('click', () => showPage(button.dataset.pageTarget));
 
 async function handleModelAction(kind, modelId) {
-  if (state.installing || state.busy) return;
+  if (state.busy) return;
+  if (activeInstall(kind, modelId)) return;
   const model = modelOfKind(kind, modelId);
   if (!model) return;
+  if (state.installs.get(installKeyOf(kind, modelId))?.phase === 'paused') {
+    await installDependencies(modelId, kind, { resume: true });
+    return;
+  }
   if (model.ready) {
     if (selectedIdForKind(kind) === modelId) return;
     if (kind === 'summary') await selectSummaryModel(modelId);
@@ -740,10 +808,14 @@ for (const row of [...elements.modelRows, ...elements.summaryRows]) {
   const modelId = row.dataset.summaryModel || row.dataset.model;
   row.addEventListener('click', (event) => {
     if (event.target.closest('[data-model-remove]')) return;
+    if (event.target.closest('[data-model-action]')) return;
     requestModelAction(kind, modelId);
   });
   row.querySelector('input').addEventListener('change', () => requestModelAction(kind, modelId));
   row.querySelector('[data-model-remove]').addEventListener('click', () => void removeModel(modelId, kind));
+  row.querySelector('[data-model-pause]').addEventListener('click', () => void pauseInstall(modelId, kind));
+  row.querySelector('[data-model-resume]').addEventListener('click', () => void resumeInstall(modelId, kind));
+  row.querySelector('[data-model-cancel]').addEventListener('click', () => void cancelInstall(modelId, kind));
 }
 elements.logoutButton.addEventListener('click', async () => {
   if (!window.confirm('退出后需要重新微信扫码才能进入应用。确定退出吗？')) return;

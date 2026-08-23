@@ -65,12 +65,51 @@ async function extractArchive(archivePath, destination, signal) {
   ], { signal });
 }
 
+function abortError() {
+  return new DOMException('Aborted', 'AbortError');
+}
+
+function abortable(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason || abortError());
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason || abortError());
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      }
+    );
+  });
+}
+
+async function reusableByteCount(filePath, expectedSize) {
+  try {
+    const stats = await fsp.stat(filePath);
+    if (stats.size <= expectedSize) return stats.size;
+    await fsp.rm(filePath, { force: true });
+  } catch {
+    return 0;
+  }
+  return 0;
+}
+
+async function absorbFileBytes(filePath, byteCount, hash) {
+  if (byteCount <= 0) return;
+  const stream = fs.createReadStream(filePath, { start: 0, end: byteCount - 1 });
+  for await (const chunk of stream) hash.update(chunk);
+}
+
 class DependencyManager {
-  constructor({ rootDirectory, manifest, fetchImpl = globalThis.fetch, onProgress = () => {} }) {
+  constructor({ rootDirectory, manifest, fetchImpl = globalThis.fetch }) {
     this.rootDirectory = path.resolve(rootDirectory);
     this.manifest = manifest;
     this.fetchImpl = fetchImpl;
-    this.onProgress = onProgress;
     this.totalDownloadBytes = manifest.components
       .flatMap((component) => component.downloads)
       .reduce((sum, download) => sum + download.size, 0);
@@ -78,6 +117,14 @@ class DependencyManager {
 
   componentDirectory(componentId) {
     return ensureWithin(this.rootDirectory, path.join(this.rootDirectory, 'components', componentId));
+  }
+
+  stagingDirectory(componentId) {
+    return ensureWithin(this.rootDirectory, path.join(this.rootDirectory, 'components', `${componentId}.staging`));
+  }
+
+  async discardStagedComponent(componentId) {
+    await fsp.rm(this.stagingDirectory(componentId), { recursive: true, force: true });
   }
 
   markerPath(componentId) {
@@ -124,26 +171,64 @@ class DependencyManager {
     return component.files[fileName];
   }
 
-  async installAll(signal) {
-    await fsp.mkdir(path.join(this.rootDirectory, 'components'), { recursive: true });
-    let completedBytes = 0;
-    const status = await this.getStatus();
-    for (const component of this.manifest.components) {
-      const existing = status.components.find((item) => item.id === component.id);
-      const componentBytes = component.downloads.reduce((sum, item) => sum + item.size, 0);
-      if (existing?.ready) {
-        completedBytes += componentBytes;
-        this.emit({ phase: 'skip', component, completedBytes, currentBytes: 0 });
-        continue;
+  async installComponent(component, { signal, onEvent = () => {} } = {}) {
+    const finalDirectory = this.componentDirectory(component.id);
+    const temporaryDirectory = this.stagingDirectory(component.id);
+    await fsp.mkdir(temporaryDirectory, { recursive: true });
+
+    try {
+      let priorDownloadBytes = 0;
+      for (const download of component.downloads) {
+        if (signal?.aborted) throw signal.reason || abortError();
+        const localPath = path.join(temporaryDirectory, download.fileName);
+        const resumeBytes = await reusableByteCount(localPath, download.size);
+        await this.downloadVerified(download, localPath, signal, (position) => {
+          onEvent({
+            phase: 'download',
+            component,
+            fileName: download.fileName,
+            fileBytes: position,
+            fileTotalBytes: download.size,
+            componentBytes: priorDownloadBytes + position
+          });
+        }, resumeBytes);
+        if (download.archive) {
+          if (signal?.aborted) throw signal.reason || abortError();
+          onEvent({
+            phase: 'extract',
+            component,
+            fileName: download.fileName,
+            componentBytes: priorDownloadBytes + download.size
+          });
+          const extractionDirectory = path.join(temporaryDirectory, 'payload');
+          await fsp.mkdir(extractionDirectory, { recursive: true });
+          await abortable(extractArchive(localPath, extractionDirectory, signal), signal);
+          await fsp.rm(localPath, { force: true });
+        }
+        priorDownloadBytes += download.size;
       }
-      await this.installComponent(component, completedBytes, signal);
-      completedBytes += componentBytes;
+
+      const payloadDirectory = path.join(temporaryDirectory, 'payload');
+      const searchDirectory = fs.existsSync(payloadDirectory) ? payloadDirectory : temporaryDirectory;
+      for (const fileName of component.requiredFiles) {
+        if (!(await findFileRecursive(searchDirectory, fileName))) {
+          throw new Error(`${component.label} 压缩包中缺少 ${fileName}。`);
+        }
+      }
+      await fsp.writeFile(path.join(temporaryDirectory, '.installed.json'), JSON.stringify({
+        id: component.id,
+        version: component.version,
+        installedAt: new Date().toISOString()
+      }, null, 2));
+
+      await fsp.rm(finalDirectory, { recursive: true, force: true });
+      await fsp.rename(temporaryDirectory, finalDirectory);
+    } catch (error) {
+      if (error?.name !== 'AbortError') {
+        await fsp.rm(temporaryDirectory, { recursive: true, force: true });
+      }
+      throw error;
     }
-    const finalStatus = await this.getStatus();
-    if (!finalStatus.ready) throw new Error('依赖安装完成，但完整性检查未通过。');
-    await this.verifyInstalledEngines(signal);
-    this.emit({ phase: 'complete', completedBytes: this.totalDownloadBytes, currentBytes: 0 });
-    return finalStatus;
   }
 
   async removeModel(kind = 'transcribe') {
@@ -181,92 +266,59 @@ class DependencyManager {
     return true;
   }
 
-  async installComponent(component, completedBefore, signal) {
-    const finalDirectory = this.componentDirectory(component.id);
-    const temporaryDirectory = ensureWithin(
-      this.rootDirectory,
-      `${finalDirectory}.installing-${crypto.randomUUID()}`
-    );
-    await fsp.rm(temporaryDirectory, { recursive: true, force: true });
-    await fsp.mkdir(temporaryDirectory, { recursive: true });
+  async downloadVerified(download, destination, signal, report, resumeBytes = 0) {
+    let offset = Math.max(0, Math.min(resumeBytes, download.size));
+    let hash = crypto.createHash('sha256');
+    await absorbFileBytes(destination, offset, hash);
 
-    try {
-      let priorDownloadBytes = 0;
-      for (const download of component.downloads) {
-        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-        const localPath = path.join(temporaryDirectory, download.fileName);
-        await this.downloadVerified(download, localPath, signal, (received) => {
-          this.emit({
-            phase: 'download',
-            component,
-            fileName: download.fileName,
-            fileBytes: received,
-            fileTotalBytes: download.size,
-            completedBytes: completedBefore + priorDownloadBytes + received,
-            currentBytes: received
-          });
-        });
-        if (download.archive) {
-          this.emit({ phase: 'extract', component, fileName: download.fileName, completedBytes: completedBefore + priorDownloadBytes + download.size, currentBytes: 0 });
-          const archivePath = localPath;
-          const extractionDirectory = path.join(temporaryDirectory, 'payload');
-          await fsp.mkdir(extractionDirectory, { recursive: true });
-          await extractArchive(archivePath, extractionDirectory, signal);
-          await fsp.rm(archivePath, { force: true });
-        }
-        priorDownloadBytes += download.size;
-      }
-
-      const payloadDirectory = path.join(temporaryDirectory, 'payload');
-      const searchDirectory = fs.existsSync(payloadDirectory) ? payloadDirectory : temporaryDirectory;
-      for (const fileName of component.requiredFiles) {
-        if (!(await findFileRecursive(searchDirectory, fileName))) {
-          throw new Error(`${component.label} 压缩包中缺少 ${fileName}。`);
-        }
-      }
-      await fsp.writeFile(path.join(temporaryDirectory, '.installed.json'), JSON.stringify({
-        id: component.id,
-        version: component.version,
-        installedAt: new Date().toISOString()
-      }, null, 2));
-
-      await fsp.rm(finalDirectory, { recursive: true, force: true });
-      await fsp.rename(temporaryDirectory, finalDirectory);
-    } catch (error) {
-      await fsp.rm(temporaryDirectory, { recursive: true, force: true });
-      throw error;
+    if (offset >= download.size) {
+      await this.verifyDigest(download, destination, hash);
+      report(offset);
+      return;
     }
-  }
 
-  async downloadVerified(download, destination, signal, report) {
-    const response = await this.fetchImpl(download.url, { signal, redirect: 'follow' });
+    const headers = offset > 0 ? { Range: `bytes=${offset}-` } : {};
+    const response = await this.fetchImpl(download.url, { signal, redirect: 'follow', headers });
     if (!response.ok || !response.body) {
       throw new Error(`下载 ${download.fileName} 失败（HTTP ${response.status}）。`);
     }
-    const hash = crypto.createHash('sha256');
+    if (offset > 0 && response.status !== 206) {
+      hash = crypto.createHash('sha256');
+      offset = 0;
+    }
+
     let received = 0;
     const meter = new Transform({
       transform(chunk, _encoding, callback) {
         received += chunk.length;
         hash.update(chunk);
-        report(received);
+        report(offset + received);
         callback(null, chunk);
       }
     });
-    await pipeline(Readable.fromWeb(response.body), meter, fs.createWriteStream(destination));
+    const output = offset > 0
+      ? fs.createWriteStream(destination, { flags: 'r+', start: offset })
+      : fs.createWriteStream(destination);
+    try {
+      await pipeline(Readable.fromWeb(response.body), meter, output);
+    } catch (error) {
+      output.destroy();
+      throw error;
+    }
+    await this.verifyDigest(download, destination, hash);
+  }
+
+  async verifyDigest(download, destination, hash) {
     const digest = hash.digest('hex');
     if (digest !== download.sha256) {
       await fsp.rm(destination, { force: true });
       throw new Error(`${download.fileName} 的 SHA-256 校验失败，文件已删除。`);
     }
   }
-
-  emit(event) {
-    this.onProgress({ totalBytes: this.totalDownloadBytes, ...event });
-  }
 }
 
 module.exports = {
+  abortable,
   chooseModelAfterInstall,
   DependencyManager,
   ensureWithin,

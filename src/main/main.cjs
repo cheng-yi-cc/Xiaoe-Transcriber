@@ -10,6 +10,7 @@ const {
 } = require('electron');
 const { clearAuthSession, ensureXiaoeLogin } = require('./services/auth-capture.cjs');
 const {
+  abortable,
   chooseModelAfterInstall,
   DependencyManager,
   getModelOption,
@@ -27,10 +28,11 @@ let settings = null;
 let history = null;
 let jobController = null;
 let startupAuthGate = null;
-let dependencyOperation = null;
 let authOperation = null;
 let startupAuthOperation = null;
 let manifestCache = null;
+const activeInstalls = new Map();
+const componentInstalls = new Map();
 let authStatus = { status: 'unknown', message: '尚未检测小鹅通登录状态。' };
 let lastAuthVerification = null;
 
@@ -54,15 +56,40 @@ function createDependencyManager(modelId = settings.get('selectedModelId'), summ
   return new DependencyManager({
     rootDirectory: settings.get('modelDirectory'),
     manifest,
-    fetchImpl: (url, options) => net.fetch(url, options),
-    onProgress: (event) => {
-      if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('dependencies:progress', event);
-    }
+    fetchImpl: (url, options) => net.fetch(url, options)
   });
 }
 
 function componentDownloadBytes(component) {
   return component.downloads.reduce((sum, download) => sum + download.size, 0);
+}
+
+function installComponentShared(manager, component, { signal, onEvent, participantKey }) {
+  let entry = componentInstalls.get(component.id);
+  if (!entry) {
+    const controller = new AbortController();
+    const listeners = new Set();
+    const participants = new Set();
+    const promise = manager.installComponent(component, {
+      signal: controller.signal,
+      onEvent: (event) => {
+        for (const listener of listeners) listener(event);
+      }
+    });
+    promise.catch(() => {});
+    const tracked = promise.finally(() => componentInstalls.delete(component.id));
+    entry = { promise: tracked, controller, listeners, participants };
+    componentInstalls.set(component.id, entry);
+  }
+  entry.listeners.add(onEvent);
+  entry.participants.add(participantKey);
+  return abortable(entry.promise, signal).finally(() => {
+    entry.listeners.delete(onEvent);
+    entry.participants.delete(participantKey);
+    if (!entry.participants.size && componentInstalls.get(component.id) === entry) {
+      entry.controller.abort();
+    }
+  });
 }
 
 function summarizeManagerStatus(manager, status) {
@@ -304,7 +331,7 @@ function registerIpc() {
   });
 
   ipcMain.handle('settings:choose-model-directory', async () => {
-    if (dependencyOperation) throw new Error('模型正在处理，暂时不能更改目录。');
+    if (activeInstalls.size) throw new Error('有模型正在下载，暂时不能更改目录。');
     const result = await dialog.showOpenDialog(mainWindow, {
       title: '选择本地模型安装位置',
       defaultPath: settings.get('modelDirectory'),
@@ -315,7 +342,6 @@ function registerIpc() {
   });
 
   ipcMain.handle('settings:select-model', async (_event, modelId) => {
-    if (dependencyOperation) throw new Error('模型正在处理，暂时不能切换。');
     const option = getModelOption(dependencyManifest().modelOptions, modelId);
     if (!option || option.id !== modelId) throw new Error('未知的转写模型。');
     const model = await describeModel(option);
@@ -325,7 +351,6 @@ function registerIpc() {
   });
 
   ipcMain.handle('settings:select-summary-model', async (_event, modelId) => {
-    if (dependencyOperation) throw new Error('模型正在处理，暂时不能切换。');
     const option = getModelOption(dependencyManifest().summaryOptions, modelId);
     if (!option || option.id !== modelId) throw new Error('未知的总结模型。');
     const model = await describeSummaryModel(option);
@@ -336,7 +361,6 @@ function registerIpc() {
 
   ipcMain.handle('dependencies:status', () => getDependencyState());
   ipcMain.handle('dependencies:install', async (_event, payload = {}) => {
-    if (dependencyOperation) throw new Error('另一个模型操作正在进行。');
     const kind = payload.kind === 'summary' ? 'summary' : 'transcribe';
     const isSummary = kind === 'summary';
     const manifest = dependencyManifest();
@@ -346,39 +370,153 @@ function registerIpc() {
     const options = isSummary ? manifest.summaryOptions : manifest.modelOptions;
     const option = options.find((model) => model.id === requestedModelId);
     if (!option) throw new Error(isSummary ? '请先选择总结模型。' : '请先选择转写模型。');
-    const [gpu, vcRuntime] = await Promise.all([probeNvidiaGpu(), probeVcRuntime()]);
-    if (!gpu.supported) throw new Error('未检测到可用的 NVIDIA 显卡或驱动，请先安装 NVIDIA 驱动。');
-    if (!vcRuntime.supported) throw new Error('请先安装 Microsoft Visual C++ 2015–2022 x64 运行库。');
+    const installKey = `${kind}:${option.id}`;
+    if (activeInstalls.has(installKey)) throw new Error('这个模型已经在下载中。');
 
-    let operation;
-    if (isSummary) {
-      const activeModelId = settings.get('selectedModelId');
-      const manager = createDependencyManager(activeModelId, option.id);
-      operation = manager.installAll().then(async () => {
-        settings.set({ selectedSummaryModelId: option.id });
-        return getDependencyState(activeModelId, option.id);
-      });
-    } else {
-      const activeModelId = settings.get('selectedModelId');
-      const activeOption = getModelOption(manifest.modelOptions, activeModelId);
-      const activeModel = activeOption ? await describeModel(activeOption) : null;
-      const manager = createDependencyManager(option.id, settings.get('selectedSummaryModelId'));
-      operation = manager.installAll().then(async () => {
-        const selectedModelId = chooseModelAfterInstall(activeModelId, activeModel?.ready, option.id);
-        settings.set({ selectedModelId });
-        return getDependencyState(selectedModelId);
-      });
-    }
-    dependencyOperation = operation;
+    const record = { controller: new AbortController(), intent: null };
+    let totalBytes = 0;
+    let completedBytes = 0;
+    let manager = null;
+    let pendingComponents = [];
+
+    let lastSentAt = 0;
+    let lastPhase = '';
+    const send = (event) => {
+      if (event.phase === lastPhase && event.phase === 'download' && Date.now() - lastSentAt < 120) return;
+      lastPhase = event.phase;
+      lastSentAt = Date.now();
+      if (!mainWindow?.isDestroyed()) {
+        mainWindow.webContents.send('dependencies:progress', { kind, modelId: option.id, ...event });
+      }
+    };
+
+    const operation = (async () => {
+      const [gpu, vcRuntime] = await Promise.all([probeNvidiaGpu(), probeVcRuntime()]);
+      if (!gpu.supported) throw new Error('未检测到可用的 NVIDIA 显卡或驱动，请先安装 NVIDIA 驱动。');
+      if (!vcRuntime.supported) throw new Error('请先安装 Microsoft Visual C++ 2015–2022 x64 运行库。');
+
+      manager = isSummary
+        ? createDependencyManager(settings.get('selectedModelId'), option.id)
+        : createDependencyManager(option.id, settings.get('selectedSummaryModelId'));
+      const status = await manager.getStatus();
+      pendingComponents = manager.manifest.components.filter(
+        (component) => !status.components.find((item) => item.id === component.id)?.ready
+      );
+      totalBytes = pendingComponents.reduce((sum, component) => sum + componentDownloadBytes(component), 0);
+      send({ phase: 'prepare', label: option.label, completedBytes: 0, totalBytes });
+      for (const component of pendingComponents) {
+        const componentBytes = componentDownloadBytes(component);
+        const freshStatus = await manager.getStatus();
+        if (freshStatus.components.find((item) => item.id === component.id)?.ready) {
+          completedBytes += componentBytes;
+          send({ phase: 'skip', componentLabel: component.label, completedBytes, totalBytes });
+          continue;
+        }
+        send({ phase: 'download', componentLabel: component.label, completedBytes, totalBytes });
+        await installComponentShared(manager, component, {
+          signal: record.controller.signal,
+          participantKey: installKey,
+          onEvent: (event) => {
+            send({
+              phase: event.phase,
+              componentLabel: component.label,
+              fileName: event.fileName,
+              completedBytes: completedBytes + event.componentBytes,
+              totalBytes
+            });
+          }
+        });
+        completedBytes += componentBytes;
+      }
+      send({ phase: 'verifying', completedBytes: totalBytes, totalBytes });
+      await manager.verifyInstalledEngines(record.controller.signal);
+      if (isSummary) {
+        const activeSummaryModelId = settings.get('selectedSummaryModelId');
+        const activeSummaryOption = getModelOption(manifest.summaryOptions, activeSummaryModelId);
+        const activeSummaryModel = activeSummaryOption ? await describeSummaryModel(activeSummaryOption) : null;
+        settings.set({
+          selectedSummaryModelId: chooseModelAfterInstall(activeSummaryModelId, activeSummaryModel?.modelInstalled, option.id)
+        });
+      } else {
+        const activeModelId = settings.get('selectedModelId');
+        const activeOption = getModelOption(manifest.modelOptions, activeModelId);
+        const activeModel = activeOption ? await describeModel(activeOption) : null;
+        settings.set({
+          selectedModelId: chooseModelAfterInstall(activeModelId, activeModel?.ready, option.id)
+        });
+      }
+      send({ phase: 'complete', completedBytes: totalBytes, totalBytes });
+      return getDependencyState();
+    })();
+
+    activeInstalls.set(installKey, record);
     try {
-      return await dependencyOperation;
+      return await operation;
+    } catch (error) {
+      if (error?.name === 'AbortError' && record.intent) {
+        if (record.intent === 'cancel' && manager) {
+          for (const component of pendingComponents) {
+            const entry = componentInstalls.get(component.id);
+            if (entry && entry.participants.size > 0) continue;
+            if (entry) await entry.promise.catch(() => {});
+            await manager.discardStagedComponent(component.id).catch(() => {});
+          }
+        }
+        send({
+          phase: record.intent === 'pause' ? 'paused' : 'cancelled',
+          componentLabel: option.label,
+          completedBytes,
+          totalBytes
+        });
+        return getDependencyState();
+      }
+      send({ phase: 'error', message: error.message || String(error), completedBytes: 0, totalBytes: 0 });
+      throw error;
     } finally {
-      dependencyOperation = null;
+      activeInstalls.delete(installKey);
     }
   });
 
+  ipcMain.handle('dependencies:pause-install', (_event, payload = {}) => {
+    const kind = payload.kind === 'summary' ? 'summary' : 'transcribe';
+    const record = activeInstalls.get(`${kind}:${payload.modelId}`);
+    if (!record) throw new Error('这个模型当前没有在下载。');
+    record.intent = 'pause';
+    record.controller.abort();
+    return true;
+  });
+
+  ipcMain.handle('dependencies:cancel-install', async (_event, payload = {}) => {
+    const kind = payload.kind === 'summary' ? 'summary' : 'transcribe';
+    const isSummary = kind === 'summary';
+    const manifest = dependencyManifest();
+    const options = isSummary ? manifest.summaryOptions : manifest.modelOptions;
+    const option = getModelOption(options, payload.modelId);
+    if (!option || option.id !== payload.modelId) throw new Error(isSummary ? '未知的总结模型。' : '未知的转写模型。');
+
+    const record = activeInstalls.get(`${kind}:${option.id}`);
+    if (record) {
+      record.intent = 'cancel';
+      record.controller.abort();
+      return true;
+    }
+
+    const manager = isSummary
+      ? createDependencyManager(settings.get('selectedModelId'), option.id)
+      : createDependencyManager(option.id, settings.get('selectedSummaryModelId'));
+    for (const component of manager.manifest.components) {
+      if (component.modelOptionId && component.modelOptionId !== option.id) continue;
+      if (component.summaryOptionId && component.summaryOptionId !== option.id) continue;
+      const entry = componentInstalls.get(component.id);
+      if (entry && entry.participants.size > 0) continue;
+      if (entry) await entry.promise.catch(() => {});
+      await manager.discardStagedComponent(component.id).catch(() => {});
+    }
+    return getDependencyState();
+  });
+
   ipcMain.handle('dependencies:remove-model', async (_event, payload = {}) => {
-    if (dependencyOperation) throw new Error('另一个模型操作正在进行。');
+    if (activeInstalls.size) throw new Error('有模型正在下载，暂时不能删除。');
     const kind = payload.kind === 'summary' ? 'summary' : 'transcribe';
     const isSummary = kind === 'summary';
     const manifest = dependencyManifest();
@@ -397,19 +535,14 @@ function registerIpc() {
         }
       }
       const manager = createDependencyManager(activeModelId, option.id);
-      dependencyOperation = manager.removeModel('summary').then(() => getDependencyState());
+      return manager.removeModel('summary').then(() => getDependencyState());
     } else {
       const activeState = await getDependencyState(activeModelId);
       if (activeModelId === option.id && activeState.ready) {
         throw new Error('当前正在使用这个模型。请先切换到另一个已安装模型。');
       }
       const manager = createDependencyManager(option.id, settings.get('selectedSummaryModelId'));
-      dependencyOperation = manager.removeModel().then(() => getDependencyState(activeModelId));
-    }
-    try {
-      return await dependencyOperation;
-    } finally {
-      dependencyOperation = null;
+      return manager.removeModel().then(() => getDependencyState(activeModelId));
     }
   });
 
