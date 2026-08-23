@@ -2,7 +2,14 @@ const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { runProcess } = require('./process-runner.cjs');
-const { paragraphizeTranscript, removeFillerWords } = require('./transcript-utils.cjs');
+const { addAudioEmphasis } = require('./audio-emphasis.cjs');
+const {
+  buildTimedParagraphs,
+  formatTimedTranscript,
+  parseSrtSegments,
+  plainTextFromTimedParagraphs,
+  removeFillerWords
+} = require('./transcript-utils.cjs');
 const { toSimplifiedChinese } = require('./chinese-conversion.cjs');
 
 async function extractAudio({ ffmpegPath, mediaPath, audioPath, signal, onProgress = () => {} }) {
@@ -41,7 +48,7 @@ async function transcribeAudio({ whisperPath, modelPath, audioPath, workDirector
     '-t', String(threadCount),
     '-fa',
     '-pp',
-    '-otxt',
+    '-osrt',
     '-of', outputBase
   ];
   if (vadModelPath) args.push('--vad', '-vm', vadModelPath);
@@ -56,11 +63,18 @@ async function transcribeAudio({ whisperPath, modelPath, audioPath, workDirector
       }
     }
   });
-  const raw = await fsp.readFile(`${outputBase}.txt`, 'utf8');
-  const transcript = toSimplifiedChinese(paragraphizeTranscript(removeFillerWords(raw)));
-  if (!transcript.trim()) throw new Error('转写引擎没有生成有效文字。');
+  const rawSrt = await fsp.readFile(`${outputBase}.srt`, 'utf8');
+  const segments = parseSrtSegments(rawSrt).map((segment) => ({
+    ...segment,
+    text: toSimplifiedChinese(removeFillerWords(segment.text))
+  })).filter((segment) => segment.text.trim());
+  let paragraphs = buildTimedParagraphs(segments);
+  if (!paragraphs.length) throw new Error('转写引擎没有生成有效文字。');
+  paragraphs = await addAudioEmphasis(paragraphs, audioPath);
+  const transcript = formatTimedTranscript(paragraphs);
+  const plainTranscript = plainTextFromTimedParagraphs(paragraphs);
   onProgress({ percent: 100 });
-  return transcript;
+  return { paragraphs, plainTranscript, transcript };
 }
 
 module.exports = { extractAudio, transcribeAudio };

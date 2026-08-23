@@ -2,7 +2,7 @@ const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { captureAuthorizedReplay } = require('./services/auth-capture.cjs');
-const { writeRawModelOutput, writeSummaryFile, writeTranscriptFile } = require('./services/export-service.cjs');
+const { writeSummaryFile, writeTranscriptFile } = require('./services/export-service.cjs');
 const { makeResultFolderPath, sanitizeWindowsName } = require('./services/file-utils.cjs');
 const { downloadHls } = require('./services/hls-downloader.cjs');
 const { summarizeTranscript } = require('./services/summarization-service.cjs');
@@ -96,7 +96,7 @@ class JobController {
       const whisperModelPath = await dependencies.resolveRequiredFile(modelOption.componentId, modelOption.fileName);
       const vadModelPath = await dependencies.resolveRequiredFile('vad-model', 'ggml-silero-v5.1.2.bin');
       this.send({ stage: 'transcribe', percent: 43, message: `${modelOption.label} 正在使用 NVIDIA GPU 转写…` });
-      const transcript = await transcribeAudio({
+      const transcription = await transcribeAudio({
         whisperPath,
         modelPath: whisperModelPath,
         audioPath,
@@ -114,7 +114,7 @@ class JobController {
         resultDirectory,
         title,
         sourceUrl,
-        transcript
+        transcript: transcription.transcript
       });
       this.send({ stage: 'summarize', percent: 77, message: '正在加载本地总结模型…', transcriptPath });
 
@@ -122,38 +122,34 @@ class JobController {
       const summaryOption = dependencies.manifest.summaryOption;
       if (!summaryOption) throw new Error('尚未选择总结模型。');
       const summaryModelPath = await dependencies.resolveRequiredFile(summaryOption.componentId, summaryOption.fileName);
-      const { text: summary, modelOutput, gatePassed, gateReason } = await summarizeTranscript({
+      const { text: summary, riskCount } = await summarizeTranscript({
         llamaServerPath,
         modelPath: summaryModelPath,
-        transcript,
+        transcript: transcription.plainTranscript,
+        timedParagraphs: transcription.paragraphs,
         signal,
-        onProgress: ({ percent, completed, total }) => this.send({
-          stage: 'summarize',
-          percent: 77 + Math.round((percent / 100) * 21),
-          message: completed ? `正在总结第 ${completed}/${total} 部分…` : '正在生成内容总结…'
-        })
+        onProgress: ({ phase, percent, completed, total, round }) => {
+          let message = '正在生成内容总结…';
+          if (phase === 'draft') message = '正在生成章节初稿…';
+          else if (phase === 'debate') message = `正在进行第 ${round}/3 轮质询与修正…`;
+          else if (phase === 'final-review') message = '正在进行只读终审…';
+          else if (completed) message = `正在分析第 ${completed}/${total} 部分…`;
+          this.send({
+            stage: 'summarize',
+            percent: 77 + Math.round((percent / 100) * 21),
+            message
+          });
+        }
       });
-      if (!gatePassed) {
-        const rawOutputPath = await writeRawModelOutput({
-          resultDirectory,
-          title,
-          sourceUrl,
-          output: modelOutput,
-          reason: gateReason
-        });
-        this.send({
-          stage: 'summarize',
-          percent: 99,
-          message: '总结未通过可靠性检查，已改用原文摘录；模型原始输出已保存供排查。',
-          rawOutputPath
-        });
-      }
       const summaryPath = await writeSummaryFile({ resultDirectory, title, sourceUrl, summary });
 
       const result = { resultDirectory, transcriptPath, summaryPath, title };
       this.onHistory({ title, sourceUrl, resultDirectory, modelId: modelOption.id });
       historyRecorded = true;
-      this.send({ stage: 'complete', percent: 100, message: '总结和完整文字稿已生成。', ...result });
+      const completeMessage = riskCount
+        ? `总结和完整文字稿已生成；${riskCount} 项终审风险已在总结文末标注。`
+        : '总结和完整文字稿已生成，三轮质询与终审均未留下风险项。';
+      this.send({ stage: 'complete', percent: 100, message: completeMessage, ...result });
       return result;
     } catch (error) {
       if (signal.aborted || error.name === 'AbortError') {
