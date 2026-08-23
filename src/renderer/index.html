@@ -74,6 +74,11 @@
               <h2>新建转写任务</h2>
               <p>单个视频</p>
             </div>
+            <div class="task-model-strip" id="taskModelStrip" aria-label="任务使用的模型">
+              <span id="taskModelContext">当前设置</span>
+              <div><small>转写模型</small><strong id="taskTranscribeModel">正在读取…</strong></div>
+              <div><small>总结模型</small><strong id="taskSummaryModel">正在读取…</strong></div>
+            </div>
             <label class="url-label" for="sourceUrl">小鹅通视频播放页</label>
             <div class="url-input">
               <input id="sourceUrl" type="url" autocomplete="off" spellcheck="false" placeholder="粘贴你有权回放的视频链接">
@@ -118,6 +123,9 @@
       </section>
 
       <section class="page settings-page hidden" id="settingsPage" data-page="settings">
+        <div class="settings-job-notice hidden" id="settingsJobNotice" role="status">
+          当前任务继续使用启动时的设置；这里的更改将从下一次任务生效。
+        </div>
         <section class="system-strip" aria-label="电脑配置检测结果">
           <div><small>检测到的显卡</small><strong id="gpuName">正在检测</strong></div>
           <div><small>显存</small><strong id="gpuMemory">—</strong></div>
@@ -131,13 +139,13 @@
             <p>根据显存、内存和稳定性自动推荐 · 点击未安装的模型开始下载 · 支持暂停、断点续传与多个同时下载</p>
           </div>
           <div class="model-list" role="radiogroup" aria-label="选择转写模型">
-            <div class="model-row" data-model="small">
-              <label class="model-choice" for="modelSmall">
-                <input id="modelSmall" type="radio" name="model" value="small">
-                <span><b>Whisper Small</b><small>轻量 · 多语言</small></span>
+            <div class="model-row" data-model="large-v3-turbo">
+              <label class="model-choice" for="modelLargeTurbo">
+                <input id="modelLargeTurbo" type="radio" name="model" value="large-v3-turbo">
+                <span><b>Whisper Large v3 Turbo</b><small>高精度 · 多语言</small></span>
               </label>
-              <span><b>466 MB</b><small>2 GB+ 显存</small></span>
-              <i data-model-status>适合低配置电脑</i>
+              <span><b>1.6 GB</b><small>6 GB+ 显存</small></span>
+              <i data-model-status>适合高性能显卡</i>
               <button type="button" class="model-remove hidden" data-model-remove>删除</button>
               <div class="model-progress hidden" data-model-progress>
                 <div class="progress-track"><i data-model-progress-bar></i></div>
@@ -171,13 +179,13 @@
                 </div>
               </div>
             </div>
-            <div class="model-row" data-model="large-v3-turbo">
-              <label class="model-choice" for="modelLargeTurbo">
-                <input id="modelLargeTurbo" type="radio" name="model" value="large-v3-turbo">
-                <span><b>Whisper Large v3 Turbo</b><small>高精度 · 多语言</small></span>
+            <div class="model-row" data-model="small">
+              <label class="model-choice" for="modelSmall">
+                <input id="modelSmall" type="radio" name="model" value="small">
+                <span><b>Whisper Small</b><small>轻量 · 多语言</small></span>
               </label>
-              <span><b>1.6 GB</b><small>6 GB+ 显存</small></span>
-              <i data-model-status>适合高性能显卡</i>
+              <span><b>466 MB</b><small>2 GB+ 显存</small></span>
+              <i data-model-status>适合低配置电脑</i>
               <button type="button" class="model-remove hidden" data-model-remove>删除</button>
               <div class="model-progress hidden" data-model-progress>
                 <div class="progress-track"><i data-model-progress-bar></i></div>

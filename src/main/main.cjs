@@ -27,6 +27,7 @@ let mainWindow = null;
 let settings = null;
 let history = null;
 let jobController = null;
+let activeJobSettings = null;
 let startupAuthGate = null;
 let authOperation = null;
 let startupAuthOperation = null;
@@ -51,10 +52,14 @@ function dependencyManifest() {
   return manifestCache;
 }
 
-function createDependencyManager(modelId = settings.get('selectedModelId'), summaryModelId = settings.get('selectedSummaryModelId')) {
+function createDependencyManager(
+  modelId = settings.get('selectedModelId'),
+  summaryModelId = settings.get('selectedSummaryModelId'),
+  modelDirectory = settings.get('modelDirectory')
+) {
   const manifest = selectManifestForModel(dependencyManifest(), modelId, summaryModelId);
   return new DependencyManager({
-    rootDirectory: settings.get('modelDirectory'),
+    rootDirectory: modelDirectory,
     manifest,
     fetchImpl: (url, options) => net.fetch(url, options)
   });
@@ -524,6 +529,13 @@ function registerIpc() {
     const option = getModelOption(options, payload.modelId);
     if (!option || option.id !== payload.modelId) throw new Error(isSummary ? '未知的总结模型。' : '未知的转写模型。');
 
+    const activeTaskModelId = isSummary
+      ? activeJobSettings?.selectedSummaryModelId
+      : activeJobSettings?.selectedModelId;
+    if (activeTaskModelId === option.id) {
+      throw new Error('本次任务正在使用这个模型。任务完成后再删除。');
+    }
+
     const activeModelId = settings.get('selectedModelId');
     if (isSummary) {
       const activeSummaryModelId = settings.get('selectedSummaryModelId');
@@ -547,11 +559,18 @@ function registerIpc() {
   });
 
   ipcMain.handle('job:start', async (_event, payload) => {
-    const [gpu, vcRuntime] = await Promise.all([probeNvidiaGpu(), probeVcRuntime()]);
-    if (!gpu.supported) throw new Error('未检测到可用的 NVIDIA 显卡或驱动。');
-    if (!vcRuntime.supported) throw new Error('请先安装最新 Microsoft Visual C++ 2015–2022 x64 运行库。');
-    await ensureLoginForSource(payload?.sourceUrl);
-    return jobController.start(payload);
+    if (activeJobSettings) throw new Error('已有任务正在运行。');
+    const jobSettings = settings.getAll();
+    activeJobSettings = jobSettings;
+    try {
+      const [gpu, vcRuntime] = await Promise.all([probeNvidiaGpu(), probeVcRuntime()]);
+      if (!gpu.supported) throw new Error('未检测到可用的 NVIDIA 显卡或驱动。');
+      if (!vcRuntime.supported) throw new Error('请先安装最新 Microsoft Visual C++ 2015–2022 x64 运行库。');
+      await ensureLoginForSource(payload?.sourceUrl);
+      return await jobController.start({ ...payload, jobSettings });
+    } finally {
+      activeJobSettings = null;
+    }
   });
   ipcMain.handle('job:cancel', () => {
     jobController.cancel();

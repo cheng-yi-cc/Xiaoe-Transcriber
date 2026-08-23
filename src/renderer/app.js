@@ -21,6 +21,10 @@ const elements = {
   startButton: document.querySelector('#startButton'),
   cancelButton: document.querySelector('#cancelButton'),
   taskNote: document.querySelector('#taskNote'),
+  taskModelStrip: document.querySelector('#taskModelStrip'),
+  taskModelContext: document.querySelector('#taskModelContext'),
+  taskTranscribeModel: document.querySelector('#taskTranscribeModel'),
+  taskSummaryModel: document.querySelector('#taskSummaryModel'),
   jobPanel: document.querySelector('#jobPanel'),
   progressNumber: document.querySelector('#progressNumber'),
   progressBar: document.querySelector('#progressBar'),
@@ -41,6 +45,7 @@ const elements = {
   outputPath: document.querySelector('#outputPath'),
   chooseModelButton: document.querySelector('#chooseModelButton'),
   chooseOutputButton: document.querySelector('#chooseOutputButton'),
+  settingsJobNotice: document.querySelector('#settingsJobNotice'),
   prerequisitePanel: document.querySelector('#prerequisitePanel'),
   prerequisiteMessage: document.querySelector('#prerequisiteMessage'),
   runtimeButton: document.querySelector('#runtimeButton'),
@@ -53,6 +58,7 @@ const state = {
   busy: false,
   installs: new Map(),
   resultDirectory: null,
+  activeJobModels: null,
   currentPage: 'workspace'
 };
 
@@ -200,6 +206,28 @@ function isInstallingAny() {
   return false;
 }
 
+function modelUsedByActiveJob(kind, modelId) {
+  if (!state.busy || !state.activeJobModels) return false;
+  const activeModel = kind === 'summary'
+    ? state.activeJobModels.summary
+    : state.activeJobModels.transcribe;
+  return activeModel?.id === modelId;
+}
+
+function renderTaskModels() {
+  const dependencies = state.app?.dependencies;
+  if (!dependencies) return;
+  const configured = {
+    transcribe: modelById(dependencies.selectedModelId),
+    summary: summaryModelById(dependencies.selectedSummaryModelId)
+  };
+  const displayed = state.busy && state.activeJobModels ? state.activeJobModels : configured;
+  elements.taskModelContext.textContent = state.busy ? '本次任务' : '当前设置';
+  elements.taskTranscribeModel.textContent = displayed.transcribe?.label || '尚未选择';
+  elements.taskSummaryModel.textContent = displayed.summary?.label || '尚未选择';
+  elements.taskModelStrip.classList.toggle('active-task', state.busy);
+}
+
 function renderPrerequisites() {
   const { gpu, vcRuntime, dependencies } = state.app;
   let message = '';
@@ -229,10 +257,11 @@ function renderModelRow(row, kind) {
   const paused = install?.phase === 'paused';
   const failed = Boolean(install) && install.phase === 'error';
   const selected = model?.id === selectedIdForKind(kind) && model?.ready;
+  const usedByActiveJob = modelUsedByActiveJob(kind, modelId);
   const recommended = model?.id === (kind === 'summary' ? system.recommendedSummaryModelId : system.recommendedModelId);
   const incompatible = gpu.supported && gpu.memoryMb < (model?.minimumVramMb || 0);
   input.checked = selected;
-  input.disabled = state.busy || working;
+  input.disabled = working;
   row.classList.toggle('selected', selected);
   row.classList.toggle('incompatible', incompatible);
   row.classList.toggle('installing', working);
@@ -248,6 +277,7 @@ function renderModelRow(row, kind) {
     const labels = [];
     if (selected) labels.push('使用中');
     else if (model?.modelInstalled) labels.push('已安装');
+    if (usedByActiveJob && !selected) labels.push('本次任务正在使用');
     if (recommended && !selected) labels.push('推荐');
     if (incompatible) labels.push('显存不足');
     status.textContent = labels.join(' · ') || model?.suitability || '';
@@ -264,7 +294,8 @@ function renderModelRow(row, kind) {
   resumeButton.classList.toggle('hidden', !paused);
   cancelButton.classList.toggle('hidden', !working && !paused);
   removeButton.classList.toggle('hidden', !model?.modelInstalled || selected);
-  removeButton.disabled = state.busy || isInstallingAny();
+  removeButton.disabled = usedByActiveJob || isInstallingAny();
+  removeButton.title = usedByActiveJob ? '本次任务完成后可删除' : '';
 }
 
 function renderModels() {
@@ -274,14 +305,13 @@ function renderModels() {
 
 function renderDownloadState() {
   const { dependencies } = state.app;
-  const selected = modelById(dependencies.selectedModelId);
-  const selectedSummary = summaryModelById(dependencies.selectedSummaryModelId);
   elements.startButton.disabled = state.busy || !dependencies.ready;
-  elements.chooseModelButton.disabled = state.busy || isInstallingAny();
-  elements.chooseOutputButton.disabled = state.busy || isInstallingAny();
+  elements.chooseModelButton.disabled = isInstallingAny();
+  elements.chooseOutputButton.disabled = false;
   elements.taskNote.textContent = dependencies.ready
-    ? `${selected?.label || '本地模型'} + ${selectedSummary?.label || ''} 已就绪 · 处理时保持静音`
+    ? '模型已就绪 · 处理时保持静音'
     : '尚未安装所选模型 · 请前往设置下载';
+  renderTaskModels();
 }
 
 function renderHardware() {
@@ -360,7 +390,7 @@ function setBusy(busy) {
   elements.cancelButton.classList.toggle('hidden', !busy);
   elements.clearUrlButton.disabled = busy;
   elements.sourceUrl.disabled = busy;
-  for (const button of elements.navButtons) button.disabled = busy;
+  elements.settingsJobNotice.classList.toggle('hidden', !busy);
   renderModels();
   renderDownloadState();
 }
@@ -389,6 +419,10 @@ async function startJob() {
   elements.urlHint.textContent = '只处理能够正常回放的内容；检测到 DRM 或加密 HLS 时会停止。';
   elements.jobResult.classList.add('hidden');
   state.resultDirectory = null;
+  state.activeJobModels = {
+    transcribe: modelById(state.app.dependencies.selectedModelId),
+    summary: summaryModelById(state.app.dependencies.selectedSummaryModelId)
+  };
   setBusy(true);
   setProgress(1, '正在创建任务…', 'capture');
   try {
@@ -403,6 +437,8 @@ async function startJob() {
     setProgress(0, error.message || String(error), 'error');
   } finally {
     setBusy(false);
+    state.activeJobModels = null;
+    renderTaskModels();
   }
 }
 
@@ -767,7 +803,6 @@ elements.authSourceUrl.addEventListener('input', () => {
 for (const button of elements.navButtons) button.addEventListener('click', () => showPage(button.dataset.pageTarget));
 
 async function handleModelAction(kind, modelId) {
-  if (state.busy) return;
   if (activeInstall(kind, modelId)) return;
   const model = modelOfKind(kind, modelId);
   if (!model) return;

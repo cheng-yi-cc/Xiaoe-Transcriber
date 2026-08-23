@@ -26,10 +26,11 @@ class JobController {
     this.current?.abortController.abort();
   }
 
-  async start({ sourceUrl }) {
+  async start({ sourceUrl, jobSettings = null }) {
     if (this.current) throw new Error('已有任务正在运行。');
     const abortController = new AbortController();
-    this.current = { abortController };
+    const taskSettings = structuredClone(jobSettings || this.settings.getAll());
+    this.current = { abortController, settings: taskSettings };
     const signal = abortController.signal;
     let temporaryDirectory = null;
     let resultDirectory = null;
@@ -37,9 +38,12 @@ class JobController {
     let historyRecorded = false;
 
     try {
-      const settings = this.settings.getAll();
-      if (!settings.outputDirectory) throw new Error('请先选择文档保存位置。');
-      const dependencies = this.createDependencyManager();
+      if (!taskSettings.outputDirectory) throw new Error('请先选择文档保存位置。');
+      const dependencies = this.createDependencyManager(
+        taskSettings.selectedModelId,
+        taskSettings.selectedSummaryModelId,
+        taskSettings.modelDirectory
+      );
       const dependencyStatus = await dependencies.getStatus();
       if (!dependencyStatus.ready) throw new Error('本地模型尚未安装完成。');
 
@@ -55,8 +59,8 @@ class JobController {
       });
 
       const title = sanitizeWindowsName(captured.title || '小鹅通视频', 88);
-      await fsp.mkdir(settings.outputDirectory, { recursive: true });
-      resultDirectory = makeResultFolderPath(settings.outputDirectory, title);
+      await fsp.mkdir(taskSettings.outputDirectory, { recursive: true });
+      resultDirectory = makeResultFolderPath(taskSettings.outputDirectory, title);
       await fsp.mkdir(resultDirectory, { recursive: false });
       temporaryDirectory = await fsp.mkdtemp(path.join(os.tmpdir(), 'xiaoe-transcription-'));
       const mediaPath = path.join(temporaryDirectory, 'media.bin');
@@ -173,7 +177,7 @@ class JobController {
           title: path.basename(resultDirectory),
           sourceUrl,
           resultDirectory,
-          modelId: this.settings.get('selectedModelId')
+          modelId: taskSettings.selectedModelId
         });
       }
       this.send({ stage: 'error', percent: 0, message: error.message, resultDirectory, transcriptPath });
