@@ -213,6 +213,25 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
   cursor: pointer;
   font-size: 10px;
 }
+.update-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ok);
+}
+.update-button i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  animation: update-pulse 1.6s ease-in-out infinite;
+}
+.update-button.busy { cursor: progress; }
+.update-button.busy i { animation-duration: .8s; }
+@keyframes update-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .35; transform: scale(.75); }
+}
 .page { padding: 38px 42px 46px; }
 .section-title { margin-bottom: 15px; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
 .section-title h2 { margin: 0; font: 400 22px Georgia, "STSong", SimSun, serif; }

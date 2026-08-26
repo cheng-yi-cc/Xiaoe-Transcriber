@@ -64,7 +64,13 @@
     <main class="app-main">
       <header class="page-topbar">
         <span id="pageLabel">工作台 / 新任务</span>
-        <div><span>内容不上传</span><button type="button" id="logoutButton">退出登录</button></div>
+        <div>
+          <span>内容不上传</span>
+          <button type="button" id="updateButton" class="update-button hidden">
+            <i aria-hidden="true"></i><span id="updateButtonLabel">发现新版本</span>
+          </button>
+          <button type="button" id="logoutButton">退出登录</button>
+        </div>
       </header>
 
       <section class="page workspace-page" id="workspacePage" data-page="workspace">
@@ -276,6 +282,21 @@
                 <input id="completionSoundToggle" type="checkbox" aria-label="转写完成提示音开关">
                 <i aria-hidden="true"></i>
               </label>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="section-title">
+            <h2>软件更新</h2>
+          </div>
+          <div class="path-list">
+            <div class="path-row">
+              <div><small>当前版本</small><strong id="currentVersion">—</strong></div>
+            </div>
+            <div class="path-row">
+              <div><small>更新状态</small><strong id="updateStatusText">尚未检查更新。</strong></div>
+              <button type="button" id="checkUpdateButton">检查更新</button>
             </div>
           </div>
         </section>
