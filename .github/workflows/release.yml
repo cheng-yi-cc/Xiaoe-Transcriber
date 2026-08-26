@@ -18,7 +18,16 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run dist
+      - name: Generate SHA-256 checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem 'dist/*Setup*.exe' | ForEach-Object {
+            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          } | Set-Content -LiteralPath 'dist/SHA256SUMS.txt' -Encoding ascii
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/*Setup*.exe
+          files: |
+            dist/*Setup*.exe
+            dist/SHA256SUMS.txt
           generate_release_notes: true
