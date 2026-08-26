@@ -15,6 +15,11 @@ const elements = {
   settingsPage: document.querySelector('#settingsPage'),
   navButtons: [...document.querySelectorAll('[data-page-target]')],
   logoutButton: document.querySelector('#logoutButton'),
+  updateButton: document.querySelector('#updateButton'),
+  updateButtonLabel: document.querySelector('#updateButtonLabel'),
+  currentVersion: document.querySelector('#currentVersion'),
+  updateStatusText: document.querySelector('#updateStatusText'),
+  checkUpdateButton: document.querySelector('#checkUpdateButton'),
   sourceUrl: document.querySelector('#sourceUrl'),
   clearUrlButton: document.querySelector('#clearUrlButton'),
   urlHint: document.querySelector('#urlHint'),
@@ -45,6 +50,7 @@ const elements = {
   outputPath: document.querySelector('#outputPath'),
   chooseModelButton: document.querySelector('#chooseModelButton'),
   chooseOutputButton: document.querySelector('#chooseOutputButton'),
+  completionSoundToggle: document.querySelector('#completionSoundToggle'),
   settingsJobNotice: document.querySelector('#settingsJobNotice'),
   prerequisitePanel: document.querySelector('#prerequisitePanel'),
   prerequisiteMessage: document.querySelector('#prerequisiteMessage'),
@@ -59,7 +65,8 @@ const state = {
   installs: new Map(),
   resultDirectory: null,
   activeJobModels: null,
-  currentPage: 'workspace'
+  currentPage: 'workspace',
+  update: { status: null, checking: false, downloading: false }
 };
 
 const stageOrder = ['capture', 'download', 'transcribe', 'summarize'];
@@ -80,6 +87,32 @@ function showToast(message) {
   elements.toast.classList.remove('hidden');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => elements.toast.classList.add('hidden'), 2600);
+}
+
+function playCompletionChime() {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const context = new AudioContextClass();
+    const now = context.currentTime;
+    const notes = [[783.99, 0], [1046.5, 0.16]];
+    for (const [index, [frequency, offset]] of notes.entries()) {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = frequency;
+      const start = now + offset;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.2, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.75);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(start);
+      oscillator.stop(start + 0.8);
+      if (index === notes.length - 1) oscillator.onended = () => void context.close();
+    }
+  } catch {
+    return;
+  }
 }
 
 function isLikelyXiaoeUrl(value) {
@@ -354,12 +387,55 @@ function renderAppState(appState) {
   elements.modelPath.title = appState.settings.modelDirectory;
   elements.outputPath.textContent = appState.settings.outputDirectory;
   elements.outputPath.title = appState.settings.outputDirectory;
+  elements.completionSoundToggle.checked = Boolean(appState.settings.completionSoundEnabled);
   if (!elements.sourceUrl.value && appState.settings.lastSourceUrl) elements.sourceUrl.value = appState.settings.lastSourceUrl;
+  elements.currentVersion.textContent = `v${appState.version}`;
   renderHardware();
   renderPrerequisites();
   renderModels();
   renderDownloadState();
   renderHistory(appState.history);
+}
+
+function renderUpdateStatus(status) {
+  state.update.status = status;
+  const available = Boolean(status?.available);
+  elements.updateButton.classList.toggle('hidden', !available || state.update.downloading);
+  if (available && !state.update.downloading) {
+    elements.updateButton.disabled = false;
+    elements.updateButton.classList.remove('busy');
+    elements.updateButtonLabel.textContent = `发现新版本 ${status.latestVersion}`;
+    elements.updateButton.title = `当前 ${status.currentVersion}，点击下载并安装`;
+  }
+  if (!status) {
+    elements.updateStatusText.textContent = '尚未检查更新。';
+  } else if (available) {
+    elements.updateStatusText.textContent = `发现新版本 ${status.latestVersion}（当前 ${status.currentVersion}），点击右上角按钮即可下载安装。`;
+  } else {
+    elements.updateStatusText.textContent = status.latestVersion
+      ? `已是最新版本（远端 ${status.latestVersion}）。`
+      : '已是最新版本。';
+  }
+}
+
+function handleUpdateProgress(event) {
+  if (event.phase === 'downloading') {
+    state.update.downloading = true;
+    const percent = event.totalBytes ? Math.min(100, Math.round((event.receivedBytes / event.totalBytes) * 100)) : 0;
+    elements.updateButton.classList.remove('hidden');
+    elements.updateButton.disabled = true;
+    elements.updateButton.classList.add('busy');
+    elements.updateButtonLabel.textContent = `正在更新 ${percent}%`;
+    elements.updateButton.title = '';
+    elements.updateStatusText.textContent = `正在下载安装包… ${percent}%`;
+  } else if (event.phase === 'downloaded') {
+    elements.updateButtonLabel.textContent = '即将退出并安装';
+    elements.updateStatusText.textContent = '下载完成，正在启动安装程序…';
+  } else if (event.phase === 'error') {
+    state.update.downloading = false;
+    renderUpdateStatus(state.update.status);
+    showToast(event.message || '更新失败，请稍后重试。');
+  }
 }
 
 function setProgress(percent, message, stage) {
@@ -438,6 +514,7 @@ function handleJobProgress(event) {
   if (event.resultDirectory) state.resultDirectory = event.resultDirectory;
   setProgress(event.percent, event.message, event.stage);
   if (event.stage === 'complete') {
+    playCompletionChime();
     elements.resultTitle.textContent = '两份文档已生成';
     elements.resultPath.textContent = event.resultDirectory;
     elements.jobResult.classList.remove('hidden');
@@ -751,6 +828,9 @@ async function initialize() {
   window.xiaoeApp.onAuthStatus(renderAuthStatus);
   window.xiaoeApp.onDependencyProgress(handleDependencyProgress);
   window.xiaoeApp.onJobProgress(handleJobProgress);
+  window.xiaoeApp.onUpdateStatus(renderUpdateStatus);
+  window.xiaoeApp.onUpdateProgress(handleUpdateProgress);
+  void window.xiaoeApp.getUpdateStatus().then(renderUpdateStatus);
   window.xiaoeApp.onVcRuntimeProgress((event) => {
     if (event.phase === 'download') elements.runtimeButton.textContent = '正在下载运行库…';
     if (event.phase === 'elevate') elements.runtimeButton.textContent = '等待 UAC 授权…';
@@ -844,7 +924,39 @@ elements.openResultButton.addEventListener('click', () => {
 });
 elements.chooseModelButton.addEventListener('click', () => void chooseDirectory('model'));
 elements.chooseOutputButton.addEventListener('click', () => void chooseDirectory('output'));
+elements.completionSoundToggle.addEventListener('change', async () => {
+  const enabled = elements.completionSoundToggle.checked;
+  try {
+    state.app.settings = await window.xiaoeApp.setCompletionSound(enabled);
+    if (enabled) playCompletionChime();
+  } catch (error) {
+    elements.completionSoundToggle.checked = !enabled;
+    showToast(error.message || String(error));
+  }
+});
 elements.runtimeButton.addEventListener('click', () => void installVcRuntime());
+elements.updateButton.addEventListener('click', async () => {
+  if (state.update.downloading || !state.update.status?.available) return;
+  try {
+    await window.xiaoeApp.installUpdate();
+  } catch (error) {
+    showToast(error.message || String(error));
+  }
+});
+elements.checkUpdateButton.addEventListener('click', async () => {
+  if (state.update.checking) return;
+  state.update.checking = true;
+  elements.checkUpdateButton.disabled = true;
+  elements.updateStatusText.textContent = '正在检查更新…';
+  try {
+    renderUpdateStatus(await window.xiaoeApp.checkForUpdates());
+  } catch (error) {
+    elements.updateStatusText.textContent = error.message || String(error);
+  } finally {
+    state.update.checking = false;
+    elements.checkUpdateButton.disabled = false;
+  }
+});
 window.addEventListener('resize', () => requestAnimationFrame(syncAuthViewBounds));
 new ResizeObserver(syncAuthViewBounds).observe(elements.authViewSlot);
 

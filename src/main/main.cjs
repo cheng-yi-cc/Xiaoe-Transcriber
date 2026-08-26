@@ -1,5 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
+const { Readable } = require('node:stream');
 const {
   app,
   BrowserWindow,
@@ -20,6 +22,7 @@ const { HistoryStore } = require('./services/history-store.cjs');
 const { SettingsStore } = require('./services/settings-store.cjs');
 const { StartupAuthGate } = require('./services/startup-auth-gate.cjs');
 const { getSystemProfile, probeNvidiaGpu, probeVcRuntime } = require('./services/system-probe.cjs');
+const { checkForUpdate } = require('./services/update-service.cjs');
 const { installVcRuntime } = require('./services/vc-runtime-installer.cjs');
 const { JobController } = require('./job-controller.cjs');
 const { isAllowedCourseUrl } = require('./services/url-utils.cjs');
@@ -53,6 +56,96 @@ let manifestCache = null;
 const activeInstalls = new Map();
 const componentInstalls = new Map();
 let authStatus = { status: 'unknown', message: '尚未检测小鹅通登录状态。' };
+let updateStatus = null;
+let updateDownload = null;
+
+function publishUpdateStatus(status) {
+  updateStatus = status;
+  if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('update:status', updateStatus);
+  return updateStatus;
+}
+
+async function runUpdateCheck({ silent = false } = {}) {
+  try {
+    const status = await checkForUpdate({
+      currentVersion: app.getVersion(),
+      fetchImpl: (url, options) => net.fetch(url, options)
+    });
+    return publishUpdateStatus(status);
+  } catch (error) {
+    if (silent) {
+      console.error(`[update] 检查更新失败：${error.message}`);
+      return updateStatus;
+    }
+    throw error;
+  }
+}
+
+async function downloadAndInstallUpdate() {
+  if (updateDownload) throw new Error('安装包正在下载中。');
+  if (!updateStatus?.available || !updateStatus.asset?.downloadUrl) {
+    throw new Error('当前没有可用的新版本。');
+  }
+  if (activeJobSettings) throw new Error('转写任务进行中，任务完成后再更新。');
+
+  const asset = updateStatus.asset;
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    title: '发现新版本',
+    message: `发现新版本 ${updateStatus.latestVersion}（当前 ${app.getVersion()}）`,
+    detail: `将下载 ${asset.name}（约 ${(asset.size / 1024 / 1024).toFixed(1)} MB），完成后自动运行安装程序并退出应用。`,
+    buttons: ['下载并安装', '暂不更新'],
+    defaultId: 0,
+    cancelId: 1
+  });
+  if (response !== 0) return false;
+
+  const controller = new AbortController();
+  const record = { controller };
+  updateDownload = record;
+
+  let lastSentAt = 0;
+  const sendProgress = (event) => {
+    if (event.phase === 'downloading' && Date.now() - lastSentAt < 120) return;
+    lastSentAt = Date.now();
+    if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('update:progress', event);
+  };
+
+  try {
+    const response = await net.fetch(asset.downloadUrl, { signal: controller.signal });
+    if (!response.ok || !response.body) throw new Error(`安装包下载失败（HTTP ${response.status}）。`);
+    const totalBytes = Number(response.headers.get('content-length')) || asset.size;
+    const targetPath = path.join(app.getPath('temp'), 'Xiaoe Transcriber Update', asset.name);
+    await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
+    sendProgress({ phase: 'downloading', receivedBytes: 0, totalBytes });
+
+    const destination = fs.createWriteStream(targetPath);
+    let receivedBytes = 0;
+    for await (const chunk of Readable.fromWeb(response.body)) {
+      receivedBytes += chunk.length;
+      await new Promise((resolve, reject) => {
+        destination.write(chunk, (error) => (error ? reject(error) : resolve()));
+      });
+      sendProgress({ phase: 'downloading', receivedBytes, totalBytes });
+    }
+    await new Promise((resolve, reject) => destination.end((error) => (error ? reject(error) : resolve())));
+    if (receivedBytes !== asset.size) throw new Error(`安装包不完整（${receivedBytes}/${asset.size} 字节），请重试。`);
+    sendProgress({ phase: 'downloaded', receivedBytes, totalBytes });
+
+    if (process.platform !== 'win32') throw new Error('自动更新目前只支持 Windows。');
+    const child = spawn(targetPath, [], { detached: true, stdio: 'ignore' }).on('error', (error) => {
+      console.error(`[update] 启动安装程序失败：${error.message}`);
+    });
+    child.unref();
+    setTimeout(() => app.quit(), 800);
+    return true;
+  } catch (error) {
+    if (error?.name !== 'AbortError') sendProgress({ phase: 'error', message: error.message || String(error) });
+    throw error;
+  } finally {
+    updateDownload = null;
+  }
+}
 
 function defaultModelDirectory() {
   if (process.platform === 'win32' && fs.existsSync('D:\\')) {
@@ -376,6 +469,10 @@ function registerIpc() {
     return getDependencyState(undefined, modelId);
   });
 
+  ipcMain.handle('settings:set-completion-sound', (_event, enabled) => {
+    return settings.set({ completionSoundEnabled: Boolean(enabled) });
+  });
+
   ipcMain.handle('dependencies:status', () => getDependencyState());
   ipcMain.handle('dependencies:install', async (_event, payload = {}) => {
     const kind = payload.kind === 'summary' ? 'summary' : 'transcribe';
@@ -627,6 +724,10 @@ function registerIpc() {
       if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('system:vc-runtime-progress', event);
     }
   }));
+
+  ipcMain.handle('update:get-status', () => updateStatus);
+  ipcMain.handle('update:check', () => runUpdateCheck());
+  ipcMain.handle('update:install', () => downloadAndInstallUpdate());
 }
 
 const singleInstanceLock = isAuthProbe || app.requestSingleInstanceLock();
@@ -651,7 +752,8 @@ if (!singleInstanceLock) {
       modelDirectory: defaultModelDirectory(),
       lastSourceUrl: '',
       selectedModelId: '',
-      selectedSummaryModelId: ''
+      selectedSummaryModelId: '',
+      completionSoundEnabled: true
     });
     history = new HistoryStore(path.join(app.getPath('userData'), 'history.json'));
     createMainWindow();
@@ -664,6 +766,12 @@ if (!singleInstanceLock) {
       onHistory: (entry) => history.add(entry)
     });
     registerIpc();
+
+    if (!process.env.XIAOE_TRANSCRIBER_SCREENSHOT_PATH) {
+      mainWindow.webContents.once('did-finish-load', () => {
+        setTimeout(() => void runUpdateCheck({ silent: true }), 3000);
+      });
+    }
   }).catch((error) => {
     console.error(String(error?.message || error));
     if (isAuthProbe) app.exit(1);
