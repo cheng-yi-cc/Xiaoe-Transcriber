@@ -8,7 +8,7 @@ const {
   net,
   shell
 } = require('electron');
-const { clearAuthSession, ensureXiaoeLogin } = require('./services/auth-capture.cjs');
+const { captureAuthorizedReplay, clearAuthSession } = require('./services/auth-capture.cjs');
 const {
   abortable,
   chooseModelAfterInstall,
@@ -22,6 +22,25 @@ const { StartupAuthGate } = require('./services/startup-auth-gate.cjs');
 const { getSystemProfile, probeNvidiaGpu, probeVcRuntime } = require('./services/system-probe.cjs');
 const { installVcRuntime } = require('./services/vc-runtime-installer.cjs');
 const { JobController } = require('./job-controller.cjs');
+const { isAllowedCourseUrl } = require('./services/url-utils.cjs');
+
+const AUTH_PROBE_FLAG = 'verify-auth';
+const authProbeIndex = process.argv.indexOf(AUTH_PROBE_FLAG);
+let authProbeEnvUrls = [];
+try {
+  authProbeEnvUrls = JSON.parse(process.env.XIAOE_AUTH_PROBE_URLS || '[]');
+} catch {}
+const authProbeUrls = Array.isArray(authProbeEnvUrls) && authProbeEnvUrls.length
+  ? authProbeEnvUrls
+  : (authProbeIndex >= 0 ? process.argv.slice(authProbeIndex + 1) : []);
+const isAuthProbe = process.env.XIAOE_AUTH_PROBE_MODE === '1' || authProbeIndex >= 0;
+if (isAuthProbe) {
+  const probeUserData = path.resolve(
+    process.env.XIAOE_AUTH_PROBE_USER_DATA || path.join(process.cwd(), '.auth-probe-user-data')
+  );
+  fs.mkdirSync(probeUserData, { recursive: true });
+  app.setPath('userData', probeUserData);
+}
 
 let mainWindow = null;
 let settings = null;
@@ -29,19 +48,49 @@ let history = null;
 let jobController = null;
 let activeJobSettings = null;
 let startupAuthGate = null;
-let authOperation = null;
 let startupAuthOperation = null;
 let manifestCache = null;
 const activeInstalls = new Map();
 const componentInstalls = new Map();
 let authStatus = { status: 'unknown', message: '尚未检测小鹅通登录状态。' };
-let lastAuthVerification = null;
 
 function defaultModelDirectory() {
   if (process.platform === 'win32' && fs.existsSync('D:\\')) {
     return 'D:\\Xiaoe-Transcriber\\Models';
   }
   return path.join(app.getPath('localAppData'), 'Xiaoe Transcriber', 'Models');
+}
+
+async function runAuthProbe() {
+  if (!authProbeUrls.length || authProbeUrls.some((url) => !isAllowedCourseUrl(url))) {
+    throw new Error('用法：npm run verify:auth -- <小鹅通课程链接> [更多课程链接]');
+  }
+  const parent = new BrowserWindow({
+    width: 900,
+    height: 640,
+    show: true,
+    title: '小鹅通跨店铺登录验证',
+    backgroundColor: '#fffdf7',
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
+  });
+  const abortController = new AbortController();
+  try {
+    for (let index = 0; index < authProbeUrls.length; index += 1) {
+      const onStatus = ({ message }) => {
+        if (message) console.log(`[账号授权 ${index + 1}/${authProbeUrls.length}] ${message}`);
+      };
+      await captureAuthorizedReplay({
+        parent,
+        sourceUrl: authProbeUrls[index],
+        signal: abortController.signal,
+        onStatus
+      });
+      console.log(`[账号授权 ${index + 1}/${authProbeUrls.length}] 验证成功（已检测到回放流）`);
+    }
+  } finally {
+    abortController.abort();
+    if (!parent.isDestroyed()) parent.close();
+  }
 }
 
 function dependencyManifest() {
@@ -185,47 +234,10 @@ function publishAuthStatus(event) {
   return authStatus;
 }
 
-async function ensureLoginForSource(sourceUrl) {
-  const normalizedUrl = String(sourceUrl || settings.get('lastSourceUrl') || '').trim();
-  if (!normalizedUrl) {
-    return publishAuthStatus({ status: 'needs-link', message: '请先输入一个有权访问的小鹅通视频链接。' });
-  }
-
-  settings.set({ lastSourceUrl: normalizedUrl });
-  if (
-    lastAuthVerification
-    && lastAuthVerification.sourceUrl === normalizedUrl
-    && Date.now() - lastAuthVerification.checkedAt < 30000
-  ) {
-    return publishAuthStatus({ status: 'logged-in', message: '小鹅通已登录。' });
-  }
-  if (authOperation) return authOperation;
-
-  authOperation = ensureXiaoeLogin({
-    parent: mainWindow,
-    sourceUrl: normalizedUrl,
-    onStatus: publishAuthStatus
-  }).then((result) => {
-    lastAuthVerification = { sourceUrl: normalizedUrl, checkedAt: Date.now() };
-    return result;
-  }).finally(() => {
-    authOperation = null;
-  });
-  return authOperation;
-}
-
-async function ensureStartupLogin(sourceUrl) {
-  const normalizedUrl = String(sourceUrl || settings.get('lastSourceUrl') || '').trim();
-  if (!normalizedUrl) {
-    return publishAuthStatus({ status: 'needs-link', message: '输入一个有权访问的视频链接以显示登录二维码。' });
-  }
-  settings.set({ lastSourceUrl: normalizedUrl });
+async function ensureStartupLogin() {
   if (startupAuthOperation) return startupAuthOperation;
 
-  startupAuthOperation = startupAuthGate.login(normalizedUrl).then((result) => {
-    lastAuthVerification = { sourceUrl: normalizedUrl, checkedAt: Date.now() };
-    return result;
-  }).finally(() => {
+  startupAuthOperation = startupAuthGate.login().finally(() => {
     startupAuthOperation = null;
   });
   return startupAuthOperation;
@@ -560,14 +572,16 @@ function registerIpc() {
 
   ipcMain.handle('job:start', async (_event, payload) => {
     if (activeJobSettings) throw new Error('已有任务正在运行。');
+    const sourceUrl = String(payload?.sourceUrl || '').trim();
+    if (!isAllowedCourseUrl(sourceUrl)) throw new Error('请输入有效的小鹅通 HTTPS 视频播放页链接。');
+    settings.set({ lastSourceUrl: sourceUrl });
     const jobSettings = settings.getAll();
     activeJobSettings = jobSettings;
     try {
       const [gpu, vcRuntime] = await Promise.all([probeNvidiaGpu(), probeVcRuntime()]);
       if (!gpu.supported) throw new Error('未检测到可用的 NVIDIA 显卡或驱动。');
       if (!vcRuntime.supported) throw new Error('请先安装最新 Microsoft Visual C++ 2015–2022 x64 运行库。');
-      await ensureLoginForSource(payload?.sourceUrl);
-      return await jobController.start({ ...payload, jobSettings });
+      return await jobController.start({ ...payload, sourceUrl, jobSettings });
     } finally {
       activeJobSettings = null;
     }
@@ -592,17 +606,9 @@ function registerIpc() {
     startupAuthGate.setBounds(bounds);
     return true;
   });
-  ipcMain.handle('auth:startup-login', async (_event, payload = {}) => {
+  ipcMain.handle('auth:startup-login', async () => {
     try {
-      return await ensureStartupLogin(payload.sourceUrl);
-    } catch (error) {
-      const result = publishAuthStatus({ status: 'logged-out', message: error.message });
-      return { ...result, error: error.message };
-    }
-  });
-  ipcMain.handle('auth:ensure-login', async (_event, payload = {}) => {
-    try {
-      return await ensureLoginForSource(payload.sourceUrl);
+      return await ensureStartupLogin();
     } catch (error) {
       const result = publishAuthStatus({ status: 'logged-out', message: error.message });
       return { ...result, error: error.message };
@@ -611,7 +617,6 @@ function registerIpc() {
   ipcMain.handle('auth:logout', async () => {
     startupAuthGate.close();
     await clearAuthSession();
-    lastAuthVerification = null;
     publishAuthStatus({ status: 'logged-out', message: '小鹅通登录已退出。' });
     return true;
   });
@@ -624,7 +629,7 @@ function registerIpc() {
   }));
 }
 
-const singleInstanceLock = app.requestSingleInstanceLock();
+const singleInstanceLock = isAuthProbe || app.requestSingleInstanceLock();
 if (!singleInstanceLock) {
   app.quit();
 } else {
@@ -635,7 +640,12 @@ if (!singleInstanceLock) {
     }
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    if (isAuthProbe) {
+      await runAuthProbe();
+      app.quit();
+      return;
+    }
     settings = new SettingsStore(path.join(app.getPath('userData'), 'settings.json'), {
       outputDirectory: path.join(app.getPath('documents'), 'Xiaoe Transcriber'),
       modelDirectory: defaultModelDirectory(),
@@ -654,6 +664,13 @@ if (!singleInstanceLock) {
       onHistory: (entry) => history.add(entry)
     });
     registerIpc();
+  }).catch((error) => {
+    console.error(String(error?.message || error));
+    if (isAuthProbe) app.exit(1);
+    else {
+      process.exitCode = 1;
+      app.quit();
+    }
   });
 
   app.on('window-all-closed', () => {

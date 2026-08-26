@@ -21,21 +21,18 @@
       <div class="auth-state" id="authChecking">
         <div class="scan-glyph" aria-hidden="true"><i></i><i></i><i></i></div>
         <h1>正在确认登录状态</h1>
-        <p id="authCheckingMessage">正在检查当前账号是否可以正常访问小鹅通视频。</p>
+        <p id="authCheckingMessage">正在检查账号级登录状态和跨店铺学习权限。</p>
       </div>
 
-      <form class="auth-state hidden" id="authLinkForm">
-        <h1>连接小鹅通</h1>
-        <p>首次使用需要一个你有权访问的视频页面，以打开对应的微信登录二维码。</p>
-        <label for="authSourceUrl">小鹅通视频链接</label>
-        <input id="authSourceUrl" type="url" autocomplete="off" spellcheck="false" placeholder="https://…xetslk.com/sl/…">
-        <p class="field-message" id="authLinkMessage">链接只保存在这台电脑上。</p>
-        <button class="primary-action auth-submit" type="submit">继续</button>
-      </form>
+      <div class="auth-state hidden" id="authErrorState">
+        <h1>无法连接小鹅通</h1>
+        <p id="authErrorMessage">请检查网络后重试。</p>
+        <button class="primary-action auth-submit" id="authRetryButton" type="button">重试</button>
+      </div>
 
       <div class="auth-state auth-qr hidden" id="authQrState">
         <h1>使用微信扫码登录</h1>
-        <p>请在下方的小鹅通登录页完成扫码，成功后会自动进入工作台。</p>
+        <p>登录账号学习中心后，可在有权限的不同店铺之间静默切换，无需逐店扫码。</p>
         <div class="auth-view-slot" id="authViewSlot" aria-label="小鹅通登录二维码显示区域"></div>
       </div>
 
@@ -57,7 +54,7 @@
 
       <div class="side-status">
         <span></span>
-        <div><strong>小鹅通已登录</strong><small>本地处理模式</small></div>
+        <div><strong>小鹅通账号已登录</strong><small>支持跨店铺授权</small></div>
       </div>
     </aside>
 

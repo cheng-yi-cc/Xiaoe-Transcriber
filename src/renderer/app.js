@@ -5,9 +5,9 @@ const elements = {
   authPanel: document.querySelector('.auth-panel'),
   authChecking: document.querySelector('#authChecking'),
   authCheckingMessage: document.querySelector('#authCheckingMessage'),
-  authLinkForm: document.querySelector('#authLinkForm'),
-  authSourceUrl: document.querySelector('#authSourceUrl'),
-  authLinkMessage: document.querySelector('#authLinkMessage'),
+  authErrorState: document.querySelector('#authErrorState'),
+  authErrorMessage: document.querySelector('#authErrorMessage'),
+  authRetryButton: document.querySelector('#authRetryButton'),
   authQrState: document.querySelector('#authQrState'),
   authViewSlot: document.querySelector('#authViewSlot'),
   pageLabel: document.querySelector('#pageLabel'),
@@ -105,10 +105,10 @@ function syncAuthViewBounds() {
 
 function showAuthState(name, message = '') {
   elements.authChecking.classList.toggle('hidden', name !== 'checking');
-  elements.authLinkForm.classList.toggle('hidden', name !== 'link');
+  elements.authErrorState.classList.toggle('hidden', name !== 'error');
   elements.authQrState.classList.toggle('hidden', name !== 'qr');
   if (name === 'checking' && message) elements.authCheckingMessage.textContent = message;
-  if (name === 'link') requestAnimationFrame(() => elements.authSourceUrl.focus());
+  if (name === 'error' && message) elements.authErrorMessage.textContent = message;
   if (name === 'qr') requestAnimationFrame(syncAuthViewBounds);
 }
 
@@ -119,20 +119,16 @@ function renderAuthStatus(event = {}) {
     enterApplication();
   } else if (status === 'logged-out') {
     showAuthState('qr');
-  } else if (status === 'needs-link') {
-    showAuthState('link');
   } else {
     showAuthState('checking', event.message || '正在确认小鹅通登录状态…');
   }
 }
 
-async function startStartupLogin(sourceUrl) {
-  showAuthState('checking', '正在打开小鹅通页面并确认登录状态…');
-  const result = await window.xiaoeApp.startupLogin(sourceUrl || undefined);
+async function startStartupLogin() {
+  showAuthState('checking', '正在打开账号学习中心并确认登录状态…');
+  const result = await window.xiaoeApp.startupLogin();
   if (result.error) {
-    showAuthState('link');
-    elements.authLinkMessage.textContent = result.error;
-    elements.authLinkMessage.classList.add('error');
+    showAuthState('error', result.error);
     return;
   }
   renderAuthStatus(result);
@@ -166,10 +162,7 @@ function showLoginGate() {
   elements.loginGate.classList.remove('hidden');
   particleScene.mode = 'assemble';
   particleScene.resize();
-  const lastSourceUrl = state.app?.settings?.lastSourceUrl || '';
-  elements.authSourceUrl.value = lastSourceUrl;
-  if (lastSourceUrl) void startStartupLogin(lastSourceUrl);
-  else showAuthState('link');
+  void startStartupLogin();
 }
 
 function modelById(modelId) {
@@ -362,7 +355,6 @@ function renderAppState(appState) {
   elements.outputPath.textContent = appState.settings.outputDirectory;
   elements.outputPath.title = appState.settings.outputDirectory;
   if (!elements.sourceUrl.value && appState.settings.lastSourceUrl) elements.sourceUrl.value = appState.settings.lastSourceUrl;
-  if (!elements.authSourceUrl.value && appState.settings.lastSourceUrl) elements.authSourceUrl.value = appState.settings.lastSourceUrl;
   renderHardware();
   renderPrerequisites();
   renderModels();
@@ -768,38 +760,17 @@ async function initialize() {
   renderAppState(appState);
   if (!appState.auth.autoCheck) {
     if (appState.screenshotPage === 'login') {
-      showAuthState('link');
+      showAuthState('qr');
       document.body.dataset.ready = 'true';
     } else {
       enterApplication(appState.screenshotPage || 'workspace');
     }
-  } else if (appState.settings.lastSourceUrl) {
-    await startStartupLogin(appState.settings.lastSourceUrl);
   } else {
-    showAuthState('link');
+    await startStartupLogin();
   }
 }
 
-elements.authLinkForm.addEventListener('submit', (event) => {
-  event.preventDefault();
-  const sourceUrl = elements.authSourceUrl.value.trim();
-  if (!isLikelyXiaoeUrl(sourceUrl)) {
-    elements.authSourceUrl.classList.add('invalid');
-    elements.authLinkMessage.textContent = '请输入有效的小鹅通 HTTPS 视频播放页链接。';
-    elements.authLinkMessage.classList.add('error');
-    return;
-  }
-  elements.authSourceUrl.classList.remove('invalid');
-  elements.authLinkMessage.classList.remove('error');
-  state.app.settings.lastSourceUrl = sourceUrl;
-  elements.sourceUrl.value = sourceUrl;
-  void startStartupLogin(sourceUrl);
-});
-elements.authSourceUrl.addEventListener('input', () => {
-  elements.authSourceUrl.classList.remove('invalid');
-  elements.authLinkMessage.textContent = '链接只保存在这台电脑上。';
-  elements.authLinkMessage.classList.remove('error');
-});
+elements.authRetryButton.addEventListener('click', () => void startStartupLogin());
 for (const button of elements.navButtons) button.addEventListener('click', () => showPage(button.dataset.pageTarget));
 
 async function handleModelAction(kind, modelId) {
@@ -878,8 +849,6 @@ window.addEventListener('resize', () => requestAnimationFrame(syncAuthViewBounds
 new ResizeObserver(syncAuthViewBounds).observe(elements.authViewSlot);
 
 initialize().catch((error) => {
-  showAuthState('link');
-  elements.authLinkMessage.textContent = `应用初始化失败：${error.message}`;
-  elements.authLinkMessage.classList.add('error');
+  showAuthState('error', `应用初始化失败：${error.message}`);
   document.body.dataset.ready = 'true';
 });

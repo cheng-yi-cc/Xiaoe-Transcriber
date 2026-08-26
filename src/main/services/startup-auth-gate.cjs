@@ -1,6 +1,7 @@
 const { WebContentsView } = require('electron');
-const { isAuthenticatedCoursePage, isLoginPage } = require('./auth-state.cjs');
-const { AUTH_PARTITION, getAuthSession } = require('./auth-capture.cjs');
+const { isAccountLoginPage, isAuthenticatedAccountPage } = require('./auth-state.cjs');
+const { ACCOUNT_HOME_URL } = require('./account-gateway.cjs');
+const { AUTH_PARTITION } = require('./auth-capture.cjs');
 const { isAllowedXiaoeUrl } = require('./url-utils.cjs');
 
 function normalizeBounds(bounds = {}) {
@@ -13,11 +14,11 @@ function normalizeBounds(bounds = {}) {
 }
 
 async function readSnapshot(view) {
-  if (!view || view.webContents.isDestroyed()) return { url: '', text: '', hasVideo: false };
+  if (!view || view.webContents.isDestroyed()) return { url: '', text: '', accountReady: false };
   return view.webContents.executeJavaScript(`({
     url: location.href,
     text: (document.body?.innerText || '').slice(0, 5000),
-    hasVideo: Boolean(document.querySelector('video'))
+    accountReady: Boolean(document.querySelector('.index-wrapper, .my-participate-page'))
   })`, true);
 }
 
@@ -48,14 +49,10 @@ class StartupAuthGate {
     this.view = null;
   }
 
-  async login(sourceUrl) {
-    if (!isAllowedXiaoeUrl(sourceUrl)) {
-      throw new Error('请输入有效的小鹅通 HTTPS 视频播放页链接。');
-    }
+  async login() {
     if (this.operation) this.operation.cancel();
     this.destroyView();
 
-    const authSession = getAuthSession();
     const view = new WebContentsView({
       webPreferences: {
         partition: AUTH_PARTITION,
@@ -107,19 +104,19 @@ class StartupAuthGate {
         if (settled || view.webContents.isDestroyed() || view.webContents.isLoadingMainFrame()) return;
         try {
           const snapshot = await readSnapshot(view);
-          if (isLoginPage(snapshot)) {
+          if (isAccountLoginPage(snapshot)) {
             authenticatedSince = 0;
             loginWasShown = true;
             view.setVisible(true);
-            this.onStatus({ status: 'logged-out', message: '请使用微信扫码登录。' });
+            this.onStatus({ status: 'logged-out', message: '请使用微信扫码登录小鹅通账号。' });
             return;
           }
-          if (isAuthenticatedCoursePage(snapshot)) {
+          if (isAuthenticatedAccountPage(snapshot)) {
             view.setVisible(false);
             if (!authenticatedSince) authenticatedSince = Date.now();
             if (Date.now() - authenticatedSince >= 1200) {
-              this.onStatus({ status: 'logged-in', message: '小鹅通已登录。' });
-              finish(null, { status: 'logged-in', sourceUrl });
+              this.onStatus({ status: 'logged-in', message: '小鹅通账号已登录。' });
+              finish(null, { status: 'logged-in' });
             }
             return;
           }
@@ -140,7 +137,7 @@ class StartupAuthGate {
       initialTimer = setTimeout(() => {
         if (!settled && !loginWasShown) finish(new Error('无法确认小鹅通登录状态，请检查网络后重试。'));
       }, 25000);
-      view.webContents.loadURL(sourceUrl).then(() => void inspect()).catch((error) => {
+      view.webContents.loadURL(ACCOUNT_HOME_URL).then(() => void inspect()).catch((error) => {
         finish(new Error(`登录页打开失败：${error.message}`));
       });
       });

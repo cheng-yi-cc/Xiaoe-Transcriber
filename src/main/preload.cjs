@@ -17,8 +17,7 @@ contextBridge.exposeInMainWorld('xiaoeApp', {
   listHistory: () => ipcRenderer.invoke('history:list'),
   openHistory: (id) => ipcRenderer.invoke('history:open', id),
   setAuthViewBounds: (bounds) => ipcRenderer.invoke('auth:set-view-bounds', bounds),
-  startupLogin: (sourceUrl) => ipcRenderer.invoke('auth:startup-login', { sourceUrl }),
-  ensureLogin: (sourceUrl) => ipcRenderer.invoke('auth:ensure-login', { sourceUrl }),
+  startupLogin: () => ipcRenderer.invoke('auth:startup-login'),
   logout: () => ipcRenderer.invoke('auth:logout'),
   installVcRuntime: () => ipcRenderer.invoke('system:install-vc-runtime'),
   onVcRuntimeProgress: (callback) => {

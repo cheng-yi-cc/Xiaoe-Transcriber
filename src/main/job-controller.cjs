@@ -47,7 +47,7 @@ class JobController {
       const dependencyStatus = await dependencies.getStatus();
       if (!dependencyStatus.ready) throw new Error('本地模型尚未安装完成。');
 
-      this.send({ stage: 'capture', percent: 2, message: '正在打开小鹅通登录页…' });
+      this.send({ stage: 'capture', percent: 2, message: '正在解析课程并确认跨店铺授权…' });
       const captured = await captureAuthorizedReplay({
         parent: this.mainWindow,
         sourceUrl,

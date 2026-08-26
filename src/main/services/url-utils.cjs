@@ -1,19 +1,71 @@
-const ALLOWED_HOST_SUFFIXES = [
+const COURSE_HOST_SUFFIXES = [
   'xetslk.com',
   'xet.tech',
   'xiaoeknow.com',
   'pomoho.com'
 ];
+const ACCOUNT_HOST = 'study.xiaoe-tech.com';
+const GATEWAY_EXACT_HOSTS = new Set(['h5.xiaoecloud.com']);
+const APP_XIAOE_TECH_HOST_PATTERN = /^app[a-z0-9]+\.(?:h5|pc)\.xiaoe-tech\.com$/i;
 
-function isAllowedXiaoeUrl(value) {
+function parseHttpsUrl(value) {
   try {
     const url = new URL(value);
-    if (url.protocol !== 'https:') return false;
-    const host = url.hostname.toLowerCase();
-    return ALLOWED_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+    return url.protocol === 'https:' ? url : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+function hostMatchesSuffix(host, suffixes) {
+  return suffixes.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+}
+
+function isAllowedCourseUrl(value) {
+  const url = parseHttpsUrl(value);
+  return Boolean(url && hostMatchesSuffix(url.hostname.toLowerCase(), COURSE_HOST_SUFFIXES));
+}
+
+function isAllowedAccountUrl(value) {
+  const url = parseHttpsUrl(value);
+  return Boolean(url && url.hostname.toLowerCase() === ACCOUNT_HOST);
+}
+
+function isAllowedGatewayUrl(value) {
+  const url = parseHttpsUrl(value);
+  if (!url) return false;
+  const host = url.hostname.toLowerCase();
+  return GATEWAY_EXACT_HOSTS.has(host)
+    || hostMatchesSuffix(host, COURSE_HOST_SUFFIXES)
+    || APP_XIAOE_TECH_HOST_PATTERN.test(host);
+}
+
+function isAllowedXiaoeUrl(value) {
+  return isAllowedAccountUrl(value) || isAllowedGatewayUrl(value);
+}
+
+function extractXiaoeCourseIdentity(value) {
+  const url = parseHttpsUrl(value);
+  if (!url || !isAllowedCourseUrl(url.href)) return null;
+  const appMatch = /^((?:app)[a-z0-9]+)\./i.exec(url.hostname);
+  const resourceMatch = /\/v\d+\/course\/(alive|video|detail)\/([^/?#]+)/i.exec(url.pathname);
+  if (!appMatch || !resourceMatch) return null;
+  return {
+    appId: appMatch[1].toLowerCase(),
+    resourceId: resourceMatch[2],
+    resourceType: resourceMatch[1].toLowerCase(),
+    resolvedUrl: url.href
+  };
+}
+
+function isSameXiaoeCourse(value, identity) {
+  const candidate = extractXiaoeCourseIdentity(value);
+  return Boolean(
+    candidate
+    && identity
+    && candidate.appId === String(identity.appId || '').toLowerCase()
+    && candidate.resourceId === String(identity.resourceId || '')
+  );
 }
 
 function tryDecode(value, times = 3) {
@@ -82,9 +134,17 @@ function redactSensitiveUrl(value) {
 }
 
 module.exports = {
-  ALLOWED_HOST_SUFFIXES,
+  ACCOUNT_HOST,
+  ALLOWED_HOST_SUFFIXES: COURSE_HOST_SUFFIXES,
+  COURSE_HOST_SUFFIXES,
+  GATEWAY_EXACT_HOSTS,
+  extractXiaoeCourseIdentity,
   extractM3u8Candidates,
+  isAllowedAccountUrl,
+  isAllowedCourseUrl,
+  isAllowedGatewayUrl,
   isAllowedXiaoeUrl,
+  isSameXiaoeCourse,
   isSafeMediaUrl,
   redactSensitiveUrl,
   tryDecode
