@@ -45,6 +45,7 @@ const elements = {
   outputPath: document.querySelector('#outputPath'),
   chooseModelButton: document.querySelector('#chooseModelButton'),
   chooseOutputButton: document.querySelector('#chooseOutputButton'),
+  completionSoundToggle: document.querySelector('#completionSoundToggle'),
   settingsJobNotice: document.querySelector('#settingsJobNotice'),
   prerequisitePanel: document.querySelector('#prerequisitePanel'),
   prerequisiteMessage: document.querySelector('#prerequisiteMessage'),
@@ -80,6 +81,32 @@ function showToast(message) {
   elements.toast.classList.remove('hidden');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => elements.toast.classList.add('hidden'), 2600);
+}
+
+function playCompletionChime() {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const context = new AudioContextClass();
+    const now = context.currentTime;
+    const notes = [[783.99, 0], [1046.5, 0.16]];
+    for (const [index, [frequency, offset]] of notes.entries()) {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = frequency;
+      const start = now + offset;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.2, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.75);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(start);
+      oscillator.stop(start + 0.8);
+      if (index === notes.length - 1) oscillator.onended = () => void context.close();
+    }
+  } catch {
+    return;
+  }
 }
 
 function isLikelyXiaoeUrl(value) {
@@ -361,6 +388,7 @@ function renderAppState(appState) {
   elements.modelPath.title = appState.settings.modelDirectory;
   elements.outputPath.textContent = appState.settings.outputDirectory;
   elements.outputPath.title = appState.settings.outputDirectory;
+  elements.completionSoundToggle.checked = Boolean(appState.settings.completionSoundEnabled);
   if (!elements.sourceUrl.value && appState.settings.lastSourceUrl) elements.sourceUrl.value = appState.settings.lastSourceUrl;
   if (!elements.authSourceUrl.value && appState.settings.lastSourceUrl) elements.authSourceUrl.value = appState.settings.lastSourceUrl;
   renderHardware();
@@ -446,6 +474,7 @@ function handleJobProgress(event) {
   if (event.resultDirectory) state.resultDirectory = event.resultDirectory;
   setProgress(event.percent, event.message, event.stage);
   if (event.stage === 'complete') {
+    playCompletionChime();
     elements.resultTitle.textContent = '两份文档已生成';
     elements.resultPath.textContent = event.resultDirectory;
     elements.jobResult.classList.remove('hidden');
@@ -873,6 +902,16 @@ elements.openResultButton.addEventListener('click', () => {
 });
 elements.chooseModelButton.addEventListener('click', () => void chooseDirectory('model'));
 elements.chooseOutputButton.addEventListener('click', () => void chooseDirectory('output'));
+elements.completionSoundToggle.addEventListener('change', async () => {
+  const enabled = elements.completionSoundToggle.checked;
+  try {
+    state.app.settings = await window.xiaoeApp.setCompletionSound(enabled);
+    if (enabled) playCompletionChime();
+  } catch (error) {
+    elements.completionSoundToggle.checked = !enabled;
+    showToast(error.message || String(error));
+  }
+});
 elements.runtimeButton.addEventListener('click', () => void installVcRuntime());
 window.addEventListener('resize', () => requestAnimationFrame(syncAuthViewBounds));
 new ResizeObserver(syncAuthViewBounds).observe(elements.authViewSlot);

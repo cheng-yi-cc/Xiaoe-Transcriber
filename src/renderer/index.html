@@ -136,7 +136,6 @@
         <section class="settings-section">
           <div class="section-title">
             <h2>转写模型</h2>
-            <p>根据显存、内存和稳定性自动推荐 · 点击未安装的模型开始下载 · 支持暂停、断点续传与多个同时下载</p>
           </div>
           <div class="model-list" role="radiogroup" aria-label="选择转写模型">
             <div class="model-row" data-model="large-v3-turbo">
@@ -205,7 +204,6 @@
         <section class="settings-section">
           <div class="section-title">
             <h2>总结模型</h2>
-            <p>根据显存自动推荐 · 影响总结质量与速度</p>
           </div>
           <div class="model-list" role="radiogroup" aria-label="选择总结模型">
             <div class="model-row" data-summary-model="qwen3-8b">
@@ -254,7 +252,6 @@
         <section class="settings-section">
           <div class="section-title">
             <h2>存储位置</h2>
-            <p>模型和文字稿分开管理</p>
           </div>
           <div class="path-list">
             <div class="path-row">
@@ -264,6 +261,21 @@
             <div class="path-row">
               <div><small>文字稿与总结</small><strong id="outputPath">正在读取…</strong></div>
               <button type="button" id="chooseOutputButton">更改位置</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="section-title">
+            <h2>提示音</h2>
+          </div>
+          <div class="sound-list">
+            <div class="sound-row">
+              <div><small>完成提示音</small><strong>转写和总结全部完成后播放一声轻快提示</strong></div>
+              <label class="switch">
+                <input id="completionSoundToggle" type="checkbox" aria-label="转写完成提示音开关">
+                <i aria-hidden="true"></i>
+              </label>
             </div>
           </div>
         </section>

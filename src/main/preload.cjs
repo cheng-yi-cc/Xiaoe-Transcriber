@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('xiaoeApp', {
   chooseModelDirectory: () => ipcRenderer.invoke('settings:choose-model-directory'),
   selectModel: (modelId) => ipcRenderer.invoke('settings:select-model', modelId),
   selectSummaryModel: (modelId) => ipcRenderer.invoke('settings:select-summary-model', modelId),
+  setCompletionSound: (enabled) => ipcRenderer.invoke('settings:set-completion-sound', enabled),
   installDependencies: (modelId, kind) => ipcRenderer.invoke('dependencies:install', { modelId, kind }),
   pauseDependencies: (modelId, kind) => ipcRenderer.invoke('dependencies:pause-install', { modelId, kind }),
   cancelDependencies: (modelId, kind) => ipcRenderer.invoke('dependencies:cancel-install', { modelId, kind }),

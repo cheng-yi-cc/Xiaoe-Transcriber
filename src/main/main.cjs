@@ -364,6 +364,10 @@ function registerIpc() {
     return getDependencyState(undefined, modelId);
   });
 
+  ipcMain.handle('settings:set-completion-sound', (_event, enabled) => {
+    return settings.set({ completionSoundEnabled: Boolean(enabled) });
+  });
+
   ipcMain.handle('dependencies:status', () => getDependencyState());
   ipcMain.handle('dependencies:install', async (_event, payload = {}) => {
     const kind = payload.kind === 'summary' ? 'summary' : 'transcribe';
@@ -641,7 +645,8 @@ if (!singleInstanceLock) {
       modelDirectory: defaultModelDirectory(),
       lastSourceUrl: '',
       selectedModelId: '',
-      selectedSummaryModelId: ''
+      selectedSummaryModelId: '',
+      completionSoundEnabled: true
     });
     history = new HistoryStore(path.join(app.getPath('userData'), 'history.json'));
     createMainWindow();
