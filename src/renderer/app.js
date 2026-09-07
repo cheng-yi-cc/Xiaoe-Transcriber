@@ -136,13 +136,20 @@ function syncAuthViewBounds() {
   });
 }
 
+function queueAuthViewSync() {
+  requestAnimationFrame(syncAuthViewBounds);
+  setTimeout(syncAuthViewBounds, 150);
+  setTimeout(syncAuthViewBounds, 600);
+  if (document.fonts?.ready) document.fonts.ready.then(() => syncAuthViewBounds()).catch(() => {});
+}
+
 function showAuthState(name, message = '') {
   elements.authChecking.classList.toggle('hidden', name !== 'checking');
   elements.authErrorState.classList.toggle('hidden', name !== 'error');
   elements.authQrState.classList.toggle('hidden', name !== 'qr');
   if (name === 'checking' && message) elements.authCheckingMessage.textContent = message;
   if (name === 'error' && message) elements.authErrorMessage.textContent = message;
-  if (name === 'qr') requestAnimationFrame(syncAuthViewBounds);
+  if (name === 'qr') queueAuthViewSync();
 }
 
 function renderAuthStatus(event = {}) {

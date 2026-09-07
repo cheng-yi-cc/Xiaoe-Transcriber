@@ -13,6 +13,103 @@ function normalizeBounds(bounds = {}) {
   };
 }
 
+function isUsableBounds(bounds = {}) {
+  return Math.round(Number(bounds.width) || 0) >= 50 && Math.round(Number(bounds.height) || 0) >= 50;
+}
+
+function buildLoginQrScrollScript() {
+  return `(() => {
+    try {
+      const textPattern = /微信.{0,8}(?:扫码|登录)|(?:扫码|登录).{0,8}微信|扫码登录/;
+      const roots = [document];
+      for (const frame of document.querySelectorAll('iframe')) {
+        try {
+          if (frame.contentDocument) roots.push({ document: frame.contentDocument, frame });
+        } catch {}
+      }
+      const rectOf = (element) => {
+        try {
+          return element.getBoundingClientRect();
+        } catch {
+          return null;
+        }
+      };
+      let target = null;
+      let targetFrame = null;
+      for (const root of roots) {
+        const doc = root.document || root;
+        const frame = root.frame || null;
+        let elements = [];
+        try {
+          elements = [...doc.querySelectorAll('div, section, p, h1, h2, img, canvas')];
+        } catch {
+          continue;
+        }
+        for (const element of elements) {
+          let text = '';
+          try {
+            text = String(element.innerText || element.textContent || '').slice(0, 120);
+          } catch {
+            continue;
+          }
+          if (!text || !textPattern.test(text)) continue;
+          const rect = rectOf(element);
+          if (!rect || rect.width <= 40 || rect.height <= 40) continue;
+          if (!target) {
+            target = element;
+            targetFrame = frame;
+          } else {
+            const current = rect.width * rect.height;
+            const bestRect = rectOf(target);
+            const best = bestRect ? bestRect.width * bestRect.height : Number.MAX_SAFE_INTEGER;
+            if (current < best) {
+              target = element;
+              targetFrame = frame;
+            }
+          }
+        }
+      }
+      if (!target) {
+        for (const root of roots) {
+          const doc = root.document || root;
+          const frame = root.frame || null;
+          let graphics = [];
+          try {
+            graphics = [...doc.querySelectorAll('img, canvas')];
+          } catch {
+            continue;
+          }
+          for (const element of graphics) {
+            const rect = rectOf(element);
+            if (!rect || rect.width < 120 || rect.width > 320) continue;
+            const ratio = rect.width / Math.max(1, rect.height);
+            if (ratio < 0.8 || ratio > 1.25) continue;
+            target = element;
+            targetFrame = frame;
+            break;
+          }
+          if (target) break;
+        }
+      }
+      if (!target) {
+        const bodyText = String(document.body?.innerText || '');
+        if (!/微信|扫码|登录/.test(bodyText)) return false;
+        target = document.querySelector('#app, #root, main') || document.body;
+      }
+      if (!target) return false;
+      if (targetFrame) {
+        try {
+          targetFrame.scrollIntoView({ block: 'center', inline: 'center' });
+        } catch {}
+      }
+      target.scrollIntoView({ block: 'center', inline: 'center' });
+      return true;
+    } catch {
+      return false;
+    }
+  })()`;
+}
+
 async function readSnapshot(view) {
   if (!view || view.webContents.isDestroyed()) return { url: '', text: '', accountReady: false };
   return view.webContents.executeJavaScript(`({
@@ -27,13 +124,22 @@ class StartupAuthGate {
     this.mainWindow = mainWindow;
     this.onStatus = onStatus;
     this.bounds = { x: 0, y: 0, width: 1, height: 1 };
+    this.hasUsableBounds = false;
+    this.loginVisible = false;
+    this.lastQrScrollAt = 0;
     this.view = null;
     this.operation = null;
   }
 
   setBounds(bounds) {
     this.bounds = normalizeBounds(bounds);
-    this.view?.setBounds(this.bounds);
+    this.hasUsableBounds = isUsableBounds(this.bounds);
+    if (!this.view || this.view.webContents.isDestroyed()) return;
+    this.view.setBounds(this.bounds);
+    if (this.loginVisible && this.hasUsableBounds) {
+      this.view.setVisible(true);
+      this.scrollLoginQrIntoView();
+    }
   }
 
   close() {
@@ -47,11 +153,24 @@ class StartupAuthGate {
     this.mainWindow.contentView.removeChildView(this.view);
     if (!this.view.webContents.isDestroyed()) this.view.webContents.close();
     this.view = null;
+    this.loginVisible = false;
+  }
+
+  scrollLoginQrIntoView() {
+    const now = Date.now();
+    if (now - this.lastQrScrollAt < 2500) return;
+    this.lastQrScrollAt = now;
+    if (!this.view || this.view.webContents.isDestroyed()) return;
+    try {
+      this.view.webContents.executeJavaScript(buildLoginQrScrollScript(), true).catch(() => {});
+    } catch {}
   }
 
   async login() {
     if (this.operation) this.operation.cancel();
     this.destroyView();
+    this.hasUsableBounds = isUsableBounds(this.bounds);
+    this.lastQrScrollAt = 0;
 
     const view = new WebContentsView({
       webPreferences: {
@@ -107,11 +226,16 @@ class StartupAuthGate {
           if (isAccountLoginPage(snapshot)) {
             authenticatedSince = 0;
             loginWasShown = true;
-            view.setVisible(true);
+            this.loginVisible = true;
+            if (this.hasUsableBounds) {
+              view.setVisible(true);
+              this.scrollLoginQrIntoView();
+            }
             this.onStatus({ status: 'logged-out', message: '请使用微信扫码登录小鹅通账号。' });
             return;
           }
           if (isAuthenticatedAccountPage(snapshot)) {
+            this.loginVisible = false;
             view.setVisible(false);
             if (!authenticatedSince) authenticatedSince = Date.now();
             if (Date.now() - authenticatedSince >= 1200) {
@@ -121,6 +245,7 @@ class StartupAuthGate {
             return;
           }
           authenticatedSince = 0;
+          this.loginVisible = false;
           this.onStatus({ status: 'checking', message: '正在确认小鹅通登录状态…' });
         } catch {
           // Navigation can invalidate the frame between polling ticks.
@@ -147,4 +272,4 @@ class StartupAuthGate {
   }
 }
 
-module.exports = { StartupAuthGate, normalizeBounds };
+module.exports = { StartupAuthGate, normalizeBounds, isUsableBounds, buildLoginQrScrollScript };

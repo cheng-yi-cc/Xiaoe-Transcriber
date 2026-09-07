@@ -62,13 +62,13 @@
     {
       "id": "ffmpeg",
       "label": "音频处理引擎",
-      "version": "8.1.2-50",
+      "version": "8.1.2-gyan-essentials",
       "downloads": [
         {
-          "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-05-13-10/ffmpeg-n8.1.2-50-g1a748fe2cd-win64-gpl-8.1.zip",
-          "fileName": "ffmpeg-n8.1.2-win64.zip",
-          "sha256": "10fa00f886812dce2f64b5f4e817b1d17fe2596c2a9cb9ae5abb82d9ef85c7fb",
-          "size": 168259041,
+          "url": "https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-essentials_build.zip",
+          "fileName": "ffmpeg-8.1.2-essentials_build.zip",
+          "sha256": "db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec",
+          "size": 109728040,
           "archive": true
         }
       ],

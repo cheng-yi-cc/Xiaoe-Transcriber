@@ -5,7 +5,7 @@
 
 | 组件 | 用途 | 许可证 |
 | --- | --- | --- |
-| [FFmpeg](https://ffmpeg.org/) / [BtbN Windows build](https://github.com/BtbN/FFmpeg-Builds) | 音频提取 | 所选构建启用了 GPLv3 组件，按 GPLv3 分发 |
+| [FFmpeg](https://ffmpeg.org/) / [gyan.dev Windows build（含 GitHub 镜像）](https://www.gyan.dev/ffmpeg/builds/) | 音频提取 | 所选构建为静态 GPLv3，按 GPLv3 分发 |
 | [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | 本地语音识别 | MIT |
 | [Whisper Small、Medium、Large v3 Turbo models](https://huggingface.co/ggerganov/whisper.cpp) | 可选的多语言语音识别权重 | MIT |
 | [Silero VAD（ggml-org/whisper-vad）](https://huggingface.co/ggml-org/whisper-vad) | 语音活动检测，转写前过滤静音与音乐段 | MIT |
